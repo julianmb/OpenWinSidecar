@@ -5,6 +5,11 @@
     <ProjectReference Include="..\OpenWinSidecar.Core\OpenWinSidecar.Core.csproj" />
   </ItemGroup>
 
+  <!-- Copy the icon next to the exe so the WinForms tray NotifyIcon can load it at runtime -->
+  <ItemGroup>
+    <Content Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
@@ -12,6 +17,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

@@ -4,6 +4,16 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-03 — App icon for window, exe, and tray
+
+### Added
+- **Custom application icon** (`src/OpenWinSidecar.Console/app.ico`) — a rounded dark plate with the accent-blue monitor, white signal dot + wave arcs, and stand: a remote display being watched from elsewhere, matching the Console theme.
+  - *Why:* the window, taskbar, Alt-Tab, and tray all showed the generic .NET executable icon; the tray in particular is where this app lives, so the default `SystemIcons.Application` was the most visible placeholder in the product.
+  - *How:* generated programmatically (GDI+ script, per-size redraws at 16–256 px rather than scaling, solid fills for 16-px legibility; PNG-compressed entries in one multi-resolution ICO). Wired in three places: `<ApplicationIcon>` in the csproj (embeds in the exe → window/taskbar), `Icon="app.ico"` on the main Window, and the tray `NotifyIcon` loads it via `LoadAppIcon()` with base-directory/source-tree fallbacks so it works both from `dotnet run` and a published exe. The QR popup window inherits the main window's icon. The csproj also copies `app.ico` beside the exe (`Content` + `CopyToOutputDirectory`) because `ApplicationIcon` alone only embeds, it doesn't deploy the file the tray needs.
+  - *Verified:* `ExtractAssociatedIcon` on the built exe returns the custom icon; the deployed `app.ico` loads as a valid `System.Drawing.Icon`; build clean.
+
+---
+
 ## 2026-09-03 — Connect-by-QR + project history under git
 
 ### Added

@@ -122,7 +122,7 @@ public partial class MainWindow : Window
         {
             Text = "OpenWinSidecar",
             Visible = true,
-            Icon = SystemIcons.Application
+            Icon = LoadAppIcon() ?? SystemIcons.Application
         };
 
         _notifyIcon.DoubleClick += (s, e) => ShowAndRestoreWindow();
@@ -158,6 +158,37 @@ public partial class MainWindow : Window
         WindowState = WindowState.Normal;
         Activate();
         Focus();
+    }
+
+    /// <summary>
+    /// Loads the app icon for the tray. The .ico sits next to the executable (copied via
+    /// ApplicationIcon); fall back through AppDomain base directory, then the repo source
+    /// tree, so the tray icon works from `dotnet run` as well as the published exe.
+    /// </summary>
+    private static Icon? LoadAppIcon()
+    {
+        try
+        {
+            var candidates = new[]
+            {
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OpenWinSidecar.Console.ico"),
+                // dotnet run layout: bin/Debug/net10.0-windows → up to the project folder
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "app.ico"),
+            };
+
+            foreach (var path in candidates)
+            {
+                var full = Path.GetFullPath(path);
+                if (File.Exists(full))
+                {
+                    using var stream = File.OpenRead(full);
+                    return new Icon(stream);
+                }
+            }
+        }
+        catch { }
+        return null;
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -504,6 +535,7 @@ public partial class MainWindow : Window
             var popup = new Window
             {
                 Title = "Scan to connect",
+                Icon = Icon, // inherit the main window's app icon
                 SizeToContent = SizeToContent.WidthAndHeight,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
