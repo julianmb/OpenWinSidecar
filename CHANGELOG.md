@@ -4,6 +4,19 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-03 — Visual revamp (professional dashboard polish)
+
+### Changed
+Full visual pass over the Console, building strictly on top of the WCAG-measured palette and the fixed templates from the accessibility/contrast work — no color or template regressions.
+
+- **Branded header**: 42 px rounded icon tile (gradient + glow, using the app icon), product name with tagline ("Windows virtual displays, streamed to Apple devices"), status now a **pill chip** (bordered, colored background) carrying the shape-coded state marker inside — more legible than the old bare dot.
+- **Hero card**: the iPad-display toggle is now a visual anchor — subtle blue-tinted gradient, larger 24 px state text, glow shadow. It's the one primary control, so it now looks like one.
+- **Cards**: unified `Card` style (10 px radius, soft drop shadows, brighter border), uppercase section labels (CONNECT / DISPLAY SETTINGS / CONNECTED CLIENTS / ADVANCED) grouping them into a scannable hierarchy.
+- **Controls**: rounder buttons (8 px) with clearer hover/pressed states, ComboBox dropdowns with shadow + fade, focus-friendly paddings, generous spacing rhythm throughout.
+- *Verified:* self-screenshots (normal + expanded) show every element rendering: header chip, hero, QR card, expanders with light headers. Two build bugs caught and fixed en route: a duplicate `CardBorder` resource key (brush vs. style) and a double-set `Background` on the hero card.
+
+---
+
 ## 2026-09-03 — Text-contrast pass (WCAG-measured)
 
 ### Changed

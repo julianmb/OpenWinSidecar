@@ -234,6 +234,11 @@ public partial class MainWindow : Window
         StatusShape.Background = isRunning ? (SolidColorBrush)FindResource("Good") : null;
         StatusShape.BorderBrush = isRunning ? (SolidColorBrush)FindResource("Good") : (SolidColorBrush)FindResource("Bad");
         StatusShape.CornerRadius = isRunning ? new CornerRadius(2) : new CornerRadius(5);
+
+        StatusChip.Background = isRunning ? (SolidColorBrush)FindResource("GoodBg") : (SolidColorBrush)FindResource("BadBg");
+        StatusChip.BorderBrush = isRunning ? (SolidColorBrush)FindResource("Good") : (SolidColorBrush)FindResource("Bad");
+        TxtServiceState.Foreground = isRunning ? (SolidColorBrush)FindResource("Good") : (SolidColorBrush)FindResource("Bad");
+
         TxtServiceState.Text = isRunning ? $"Running · PID {_manager.ProcessManager.ProcessId} · {_manager.ProcessManager.MemoryUsageMb:F0} MB" : "Stopped";
 
         // Hero card: single source of truth for the iPad display state
