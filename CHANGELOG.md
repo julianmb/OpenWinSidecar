@@ -1,0 +1,111 @@
+# OpenWinSidecar — Change Log
+
+Every change to this project is documented here: **what** was changed, **why**, and **how it was verified**. New entries go at the top. The commit history (`git log`) carries the same explanations per commit; this file is the human-readable narrative.
+
+---
+
+## 2026-09-03 — Connect-by-QR + project history under git
+
+### Added
+- **QR connect code in the Console** (`MainWindow.xaml` / `MainWindow.xaml.cs`).
+  - *Why:* typing `http://192.168.1.x:8080` on an iPad keyboard is the single worst first-run experience. The QR encodes exactly the URL already shown in the Connect card (auto-regenerated when the LAN endpoint changes during the 3s poll), so camera-scan → Safari → streaming with zero typing.
+  - *How:* `QRCoder` NuGet package (pure managed, fully offline — no third-party QR service ever sees the URL). Level Q error correction, dark modules on a white card (QR needs light-on-dark contrast even on the dark theme). Click the code for a 420×420 across-the-room popup.
+  - *Verified:* self-screenshot (`--screenshot` diagnostics flag) shows the card rendering in the Connect panel.
+- **`tools/` diagnostics kit** — the PowerShell test clients used to verify the streaming protocol moved from temp folders into the repo (`ws_smoke_test.ps1`, `ws_auth_test.ps1`, `ws_wire_test.ps1`, `ws_hevc_validate.ps1`, `enum_vdd_modes.ps1`).
+  - *Why:* these are the project's acceptance tests; they caught every regression listed below and belong with the code.
+- **Git repository initialized** with the full project history committed in explanatory commits (see below).
+
+### Changed
+- `.gitignore` extended: `*.log`, `scratch_screen_*.jpg`, `vdd_control.zip`/`vdd_x64.zip` (71 MB of driver archives — the extracted files under `drivers/VDD/` are what the code actually uses).
+
+---
+
+## 2026-09-02 — Safari-ready hardware HEVC (hvcC + Main profile + long GOP)
+
+### Fixed / Added
+- **NAL continuation bug in the Annex-B parser** (`HevcQsvStreamEncoder.cs`).
+  - *Symptom:* headers (VPS/SPS/PPS) parsed but zero video frames delivered.
+  - *Cause:* any NAL spanning two pipe reads was silently discarded — after buffer compaction the next scan pass forgot it was inside a NAL, so the ~90 KB IDR slice (spanning 3 reads of 32 KB) was lost. Small NALs contained in a single read worked, which is why headers still appeared.
+  - *Fix:* explicit `_inNalContinuation` state carried across passes.
+- **Idle-starved access-unit stall.** The last picture of a quiet desktop never flushed because an AU is only complete when the *next* one's first-slice NAL arrives. With the idle-skip (#09-02) starving the encoder on static desktops, that meant the one and only frame never shipped.
+  - *Fix:* silence-based force-complete — if no encoder bytes arrive for 120 ms, the accumulated NAL is treated as complete (safe: ffmpeg writes AUs atomically) and the pending AU flushes.
+- **4:4:4 → Main profile** (`-vf format=nv12,hwupload`).
+  - *Why:* BGRA→QSV surfaces default to yuv444p/Rext, which iPads can only software-decode. NV12 yields Main profile (yuv420p) → hardware decode on every Apple device. Learned via ffprobe on the reconstructed stream; also learned `extra_hw_frames` breaks the D3D11 pool on this driver (E_INVALIDARG texture creation, caught by the new stderr logging).
+- **hvcC description + length-prefixed AU framing.**
+  - *What:* the encoder's Annex-B output is parsed into NALs, re-framed as access-unit-aligned chunks of 4-byte length-prefixed NAL units, and a one-shot `desc:<codec>|<base64 hvcC>` message (HEVCDecoderConfigurationRecord built from the SPS profile_tier_level, emulation-prevention stripped) is delivered before the first chunk. Web client configures `VideoDecoder` with `description` + the true codec string instead of a hardcoded guess.
+  - *Why:* Safari's WebCodecs reliably hardware-decodes HEVC only with the out-of-band description; bare Annex-B with in-band parameter sets is Chrome-tolerated, Safari-unreliable.
+  - *Bug fixed on the way:* SPS parsing must read the RBSP with emulation-prevention bytes removed (`00 00 03` escaping shifts profile_tier_level offsets) — the codec string was garbage before that.
+- **GOP 60 → 240 (4 s), `-async_depth 1`.**
+  - *Why:* every client owns its encoder instance and therefore joins on an IDR, so frequent keyframes only cost bitrate/quality. 1-second keyframes were burning quality for no join benefit; 4 s is free. `-async_depth 1` minimizes encoder buffering latency.
+- **FFmpeg stderr capture** (`[HEVC QSV][ff]` log lines).
+  - *Why:* the driver-level texture-pool failure above was invisible before — the encoder died silently after headers. Now every ffmpeg failure surfaces in the service log.
+
+### Verified
+Client-side reconstruction of the received chunks back to Annex-B, probed with ffprobe: `hevc / Main / 1180×664 / yuv420p`, one AU per chunk, keyframe flag correct, 88–113 byte delta frames on static content. JPEG path regression clean.
+
+---
+
+## 2026-09-02 — Access-password enforcement + idle-frame skip
+
+### Fixed / Added
+- **Authentication (security).** The `EncryptionPassword` registry setting existed but *nothing enforced it* — anyone on the LAN could watch the screen and inject keystrokes.
+  - WebSocket: server announces `auth:required` after upgrade; session stays completely inert (no video, no display changes) until the client sends `auth:<token>`. 3 attempts per connection in a 6 s window, constant-time compare, `auth:ok` / `auth:denied` replies.
+  - `/input` HTTP endpoint: requires matching `pw=` query parameter, else 403.
+  - Legacy raw-binary path (no auth mechanism exists): refused entirely when a password is configured.
+  - Web client: password overlay on `auth:required`, re-prompt on denial, hides on success, re-syncs settings after `auth:ok`, and suspends keystroke forwarding while the prompt is up (so typing the password doesn't type into Windows).
+  - *Verified:* scripted client — required → denied → ok → frames; `/input` 403 without `pw`, 200 with. Note: this machine has password `564D7EC4` configured (pre-existing; previously ignored).
+- **Idle-frame skip (bandwidth).**
+  - *Why:* intra-only JPEG re-sent an identical ~43 KB frame 60×/s — ~20 Mbps of nothing on a static desktop.
+  - *What:* the sink skips compose+encode+send when desktop pixels, streamed cursor, and sink settings are all unchanged. WebSocket pings every 5 s keep the connection alive during silence.
+  - *Verified:* properly-assembled client measurement: 26 fps while active (tracking real desktop changes), ~0.2 Mbps idle, zero duplicate timestamps on the wire.
+  - *Latency effect:* zero during activity; *improved* idle→active transition (the TCP pipe is empty when activity resumes, no stale-frame queue) and no reconnect penalty after long idles.
+
+---
+
+## 2026-09-01/02 — Project rename: OpenSpacedesk → OpenWinSidecar
+
+- Renamed solution (`OpenWinSidecar.slnx`), all four project folders and `.csproj` files, every namespace (`OpenWinSidecar.*`), assembly names, process-name strings in `ServiceProcessManager`, docs, and scripts.
+- `VirtualDisplayManager`'s hardcoded driver paths had already been made repo-relative (walk-up `FindProjectFile`) — no action needed there.
+- *Outstanding:* the **repo root folder** is still `C:\Users\JulianB\source\repos\OpenSpacedesk` — held open by a process that couldn't be safely killed (session/editor workspace binding). Rename manually after closing whatever holds it: `Rename-Item 'C:\Users\JulianB\source\repos\OpenSpacedesk' 'OpenWinSidecar'`. No rebuild needed afterward.
+
+---
+
+## 2026-09-01 — Console UX redesign
+
+### Changed
+- **Single-page redesign** replacing 4 tabs / ~30 buttons / 6 duplicate actions. Hierarchy: iPad-display toggle card (the one primary control) → connect card → resolution+scaling rows → clients list → collapsed Maintenance / Preferences / log expander. Auto-targets the virtual display (no monitor selector). Emoji-free labels, no marketing badges, status-bar feedback instead of success MessageBoxes (errors still get dialogs). System tray menu kept with plain labels.
+- **Dark theme completion:** proper dark ComboBox template (the stock light one was unreadable), chevron Expander template (fixed a `ContentSource="Header"` crash found via screenshot testing).
+- **`--screenshot <path> [--expand]` diagnostics flag:** renders the window (or full content tree) to PNG and exits — used for all UI verification since native screen capture is unavailable.
+
+---
+
+## 2026-08-31 — Fan-out broadcast refactor (streaming core)
+
+### Changed
+Before: every WebSocket client ran its own capture loop over shared capture services — concurrent `AcquireNextFrame` calls on one duplication object (invalid DXGI), and a slow client accumulated unbounded latency in its TCP buffer.
+
+- **`FrameBroadcastHub`** — one capture producer per display device; composes into per-client `ClientFrameSink`s. Drop-oldest backpressure via a busy-flag handoff (slow clients drop frames, never queue latency).
+- **Real timestamps** from a shared `Stopwatch` (was fabricated `frameIndex * 16666`, which broke WebCodecs pacing on drops). HEVC NAL packets dequeue their capture timestamp (`-bf 0` preserves order).
+- **Honest codec labels:** JPEG payloads are always labeled `IntraTurbo` even if the client asked for h264/av1 (they were mislabeled before — the client's `VideoDecoder` errored on every frame and silently fell back); server pushes a `codec:intra` notice when the QSV encoder can't start so the client UI syncs.
+- **Static-desktop GDI seeding:** Desktop Duplication never presents unchanged frames (DWM skips static outputs), so a newly-created virtual display delivered nothing. The producer seeds the first frame via GDI until DXGI presents.
+- **GDI fallback at speed:** full-res 1:1 BitBlt into a DIB measured ~260 ms/frame on the indirect display; the DDB-route blit (the pattern the original fast path used) at 1180-wide runs ~55 fps.
+- **Time-based DXGI recovery (2 s):** a just-retired producer's duplication handle makes `DuplicateOutput` fail with `E_INVALIDARG` for a few seconds; sticky failover left sessions on GDI. Producers also self-retire after ~2 s without subscribers.
+- **`timeBeginPeriod(1)`** at startup — without it, `Task.Delay` pacing quantizes to the 15.6 ms scheduler tick and caps the loop at ~30 fps.
+- **Once-per-process `EnableExtendMode()`:** re-flashing display topology on every session invalidated live duplication handles and flickered all monitors.
+
+### Measured
+57 FPS single JPEG client (was 15–25), 48 FPS × 2 clients (was broken), 49 FPS hardware HEVC. Capture tick: 0.1–3.5 ms (DXGI) / ~35 ms (GDI-DDB).
+
+---
+
+## 2026-08-31 — Virtual display resolutions + verification tooling
+
+- `vdd_settings.xml`: completed the iPad lineup across **all five** live/template copies (`C:\IddDriver`, `%APPDATA%\VirtualDisplayDriver`, `C:\VirtualDisplayDriver`, `drivers/VDD/`, `drivers/VDD/control/`). Driver restarted via elevated `pnputil`; verified with `EnumDisplaySettings` that `2048×1536` and `2732×2048` (plus every other iPad mode at 60/120 Hz) are advertised.
+- Key learning: the VDD device enumerates as `\\.\DISPLAY8x` and **renumbers on driver restart** (85 → 86) — never hardcode it. The duplicate `<g_refresh_rate>` entries turned out to be valid schema (global list cross-multiplied per resolution).
+- Driver architecture documented: UMDF/IddCx (`WUDFRd` + `IndirectKmd`), package lives in the Windows DriverStore (`mttvdd.inf_amd64_…`), which is why the driver can't simply "move into the project folder" — repo copies are templates; deployment targets are the live paths.
+
+---
+
+## Pre-history (before 2026-08-31)
+
+Initial build-out by earlier sessions: IddCx virtual display via MttVDD driver, GDI + DXGI capture paths with fallback, JPEG-intra WebSocket streaming with 15-byte WebCodecs framing, `SendInput` input injection with multi-touch gestures, UDP discovery on 28252, USB/ADB forwarding, WPF Console, ffmpeg `hevc_qsv` encoder wrapper (with a raw-frame sizing bug later fixed by the fan-out compose), documentation suite under `docs/`.

@@ -1,0 +1,46 @@
+<?xml version='1.0' encoding='utf-8'?>
+<vdd_settings>
+    <monitors>
+        <count>1</count>
+    </monitors>
+    <gpu>
+        <friendlyname>default</friendlyname>
+    </gpu>
+	<global>
+		<g_refresh_rate>60</g_refresh_rate>
+		<g_refresh_rate>120</g_refresh_rate>
+	</global>
+    <resolutions>
+        <resolution>
+            <width>2360</width>
+            <height>1640</height>
+            <refresh_rate>60</refresh_rate>
+        </resolution>
+        <resolution>
+            <width>1640</width>
+            <height>2360</height>
+            <refresh_rate>60</refresh_rate>
+        </resolution>
+        <resolution>
+            <width>2360</width>
+            <height>1640</height>
+            <refresh_rate>120</refresh_rate>
+        </resolution>
+        <resolution>
+            <width>1920</width>
+            <height>1080</height>
+            <refresh_rate>60</refresh_rate>
+        </resolution>
+        <resolution>
+            <width>2560</width>
+            <height>1440</height>
+            <refresh_rate>60</refresh_rate>
+        </resolution>
+    </resolutions>
+    <options>
+		<HardwareCursor>true</HardwareCursor>
+		<SDR10bit>false</SDR10bit>
+		<HDRPlus>false</HDRPlus>
+		<logging>false</logging>
+	</options>
+</vdd_settings>

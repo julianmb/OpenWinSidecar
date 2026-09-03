@@ -1,0 +1,68 @@
+<?xml version='1.0' encoding='utf-8'?>
+<vdd_settings>
+    <monitors>
+        <count>1</count>
+    </monitors>
+    <gpu>
+        <friendlyname>default</friendlyname>
+    </gpu>
+	<global>
+		<g_refresh_rate>60</g_refresh_rate>
+		<g_refresh_rate>120</g_refresh_rate>
+	</global>
+    <resolutions>
+        <!-- ============================================== -->
+        <!--  COMPLETE IPAD LINEUP RESOLUTIONS (ALL GENS)   -->
+        <!-- ============================================== -->
+
+        <!-- 1. iPad Air 10.9" / iPad 10th-11th Gen / Air 11" (59:41) -->
+        <resolution><width>2360</width><height>1640</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>1180</width><height>820</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 2. iPad Pro 11-inch (M4) -->
+        <resolution><width>2420</width><height>1668</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>2420</width><height>1668</height><refresh_rate>120</refresh_rate></resolution>
+        <resolution><width>1210</width><height>834</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 3. iPad Pro 11-inch (1st–4th gen) -->
+        <resolution><width>2388</width><height>1668</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>2388</width><height>1668</height><refresh_rate>120</refresh_rate></resolution>
+        <resolution><width>1194</width><height>834</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 4. iPad Pro 13-inch (M4) -->
+        <resolution><width>2752</width><height>2064</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>2752</width><height>2064</height><refresh_rate>120</refresh_rate></resolution>
+        <resolution><width>1376</width><height>1032</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 5. iPad Pro 12.9-inch (1st–6th gen) / iPad Air 13-inch (4:3) -->
+        <resolution><width>2732</width><height>2048</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>2732</width><height>2048</height><refresh_rate>120</refresh_rate></resolution>
+        <resolution><width>1366</width><height>1024</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 6. iPad 10.2-inch (7th, 8th, 9th gen) (4:3) -->
+        <resolution><width>2160</width><height>1620</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>1080</width><height>810</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 7. iPad Pro & Air 10.5-inch (4:3) -->
+        <resolution><width>2224</width><height>1668</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>1112</width><height>834</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 8. iPad 9.7-inch Retina & iPad mini Retina (4:3) -->
+        <resolution><width>2048</width><height>1536</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>1024</width><height>768</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- 9. iPad mini 8.3-inch (6th gen & A17 Pro) -->
+        <resolution><width>2266</width><height>1488</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>1133</width><height>744</height><refresh_rate>60</refresh_rate></resolution>
+
+        <!-- Standard PC Desktop Widescreen (16:9 / 16:10) -->
+        <resolution><width>1920</width><height>1080</height><refresh_rate>60</refresh_rate></resolution>
+        <resolution><width>2560</width><height>1440</height><refresh_rate>60</refresh_rate></resolution>
+    </resolutions>
+    <options>
+		<HardwareCursor>true</HardwareCursor>
+		<SDR10bit>false</SDR10bit>
+		<HDRPlus>false</HDRPlus>
+		<logging>false</logging>
+	</options>
+</vdd_settings>

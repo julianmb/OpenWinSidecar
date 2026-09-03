@@ -1,0 +1,17 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/
+
+# diagnostics / logs
+*.log
+
+# scratch captures
+scratch_screen_*.jpg
+
+# heavy driver archives (extracted files under drivers/VDD are what we use)
+drivers/VDD/vdd_control.zip
+drivers/VDD/vdd_x64.zip
