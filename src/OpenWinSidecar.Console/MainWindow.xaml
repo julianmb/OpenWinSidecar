@@ -12,12 +12,13 @@
 
     <Window.Resources>
         <SolidColorBrush x:Key="CardBg" Color="#1F1F25"/>
-        <SolidColorBrush x:Key="CardBorder" Color="#2C2C34"/>
+        <SolidColorBrush x:Key="CardBorder" Color="#4A4A58"/>
         <SolidColorBrush x:Key="FieldBg" Color="#141418"/>
-        <SolidColorBrush x:Key="Accent" Color="#3B82F6"/>
-        <SolidColorBrush x:Key="AccentHover" Color="#2F74E8"/>
+        <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
+        <SolidColorBrush x:Key="AccentHover" Color="#1E5FD6"/>
         <SolidColorBrush x:Key="TextPrimary" Color="#E8E8EA"/>
-        <SolidColorBrush x:Key="TextSecondary" Color="#9A9AA3"/>
+        <!-- Secondary text at 8.3:1 on cards — WCAG AAA; the old #9A9AA3 passed AA but read dim -->
+        <SolidColorBrush x:Key="TextSecondary" Color="#B8B8C2"/>
         <!-- State colors chosen for color-vision accessibility: blue/yellow axis, never
              red/green alone; every state also differs by text or shape, not just hue. -->
         <SolidColorBrush x:Key="Good" Color="#7CB7FF"/>
@@ -26,9 +27,9 @@
         <SolidColorBrush x:Key="BadBg" Color="#4A3F14"/>
 
         <Style TargetType="Button">
-            <Setter Property="Background" Value="#26262E"/>
+            <Setter Property="Background" Value="#33333E"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="BorderBrush" Value="#34343E"/>
+            <Setter Property="BorderBrush" Value="#4A4A58"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="FontSize" Value="13"/>
@@ -41,10 +42,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#30303A"/>
+                                <Setter TargetName="border" Property="Background" Value="#3A3A48"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#1C1C23"/>
+                                <Setter TargetName="border" Property="Background" Value="#22222A"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="border" Property="Opacity" Value="0.4"/>
@@ -70,7 +71,7 @@
                                 <Setter TargetName="border" Property="Background" Value="{StaticResource AccentHover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#2458C0"/>
+                                <Setter TargetName="border" Property="Background" Value="#1A55C4"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="border" Property="Opacity" Value="0.4"/>
@@ -91,7 +92,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="#2E2E38"/>
+                                <Setter TargetName="bd" Property="Background" Value="#33333E"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -110,7 +111,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
-                            <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="#34343E" BorderThickness="1" CornerRadius="6"/>
+                            <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="#4A4A58" BorderThickness="1" CornerRadius="6"/>
                             <ToggleButton Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
@@ -125,7 +126,7 @@
                                               TextElement.Foreground="{TemplateBinding Foreground}"/>
                             <Path Data="M 0 0 L 4 4 L 8 0 Z" Fill="{StaticResource TextSecondary}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" IsHitTestVisible="False"/>
                             <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade">
-                                <Border Background="#1F1F25" BorderBrush="#34343E" BorderThickness="1" CornerRadius="6" Margin="0,4,0,0" MinWidth="{TemplateBinding ActualWidth}">
+                                <Border Background="#1F1F25" BorderBrush="#4A4A58" BorderThickness="1" CornerRadius="6" Margin="0,4,0,0" MinWidth="{TemplateBinding ActualWidth}">
                                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
@@ -134,7 +135,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="BorderBrush" Value="#444450"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#565664"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -195,7 +196,7 @@
     <DockPanel>
 
         <!-- Status bar -->
-        <Border DockPanel.Dock="Bottom" Background="#131317" BorderBrush="#26262E" BorderThickness="0,1,0,0" Padding="16,7">
+        <Border DockPanel.Dock="Bottom" Background="#131317" BorderBrush="#33333E" BorderThickness="0,1,0,0" Padding="16,7">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>

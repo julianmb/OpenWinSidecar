@@ -4,6 +4,18 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-03 — Text-contrast pass (WCAG-measured)
+
+### Changed
+Follow-up to the color-vision pass after feedback that text still read badly. Measured every text/background pair with a WCAG contrast-ratio script (`tools/contrast pairs` logic in the session log; thresholds: ≥4.5:1 text, ≥3:1 non-text) instead of eyeballing.
+
+- **Accent button failed AA**: white on `#3B82F6` measured **3.68:1**. Accent darkened to `#2563EB` → **5.17:1**. This is the primary "Turn on/off iPad display" toggle and every Apply button.
+- **Secondary text brightened**: `#9A9AA3` (5.87:1 — passed AA but was the dimmest text in the app) → `#B8B8C2` (**8.33:1**, AAA). Secondary text carries most of the UI's explanatory copy, so this is the largest perceived fix.
+- **Card borders were 1.3:1** — cards barely separated from the window background, making the whole window read as one low-contrast mass. Borders raised to `#4A4A58` (~2.1:1; the practical ceiling before borders stop looking like borders on this background) and every template grey (button backgrounds/hovers, ComboBox borders, hover states) raised one step to match.
+- *Verified:* clean build; self-screenshot shows outlined cards, brighter secondary text, deeper accent button.
+
+---
+
 ## 2026-09-03 — Color-vision accessibility pass (Console + web viewer)
 
 ### Changed
