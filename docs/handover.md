@@ -104,11 +104,26 @@ Get-Process -Name "OpenWinSidecar.Service", "ffmpeg" -ErrorAction SilentlyContin
 
 ### 3. Connecting from iPad:
 1. Connect iPad to the local Wi-Fi network.
-2. Open Safari:
-   ```
-   http://192.168.1.12:8080
-   ```
-3. Tap **Share (⬆️) → Add to Home Screen** for the standalone fullscreen app.
+2. **Easiest:** open the Console on the PC and scan the QR code in the Connect card with the iPad camera, or
+   open Safari: `http://192.168.1.12:8080`
+3. If an access password is configured (this machine: see `HKLM\SOFTWARE\datronicsoft\spacedesk\Service\EncryptionPassword`), enter it when prompted.
+4. Tap **Share (⬆️) → Add to Home Screen** for the standalone fullscreen app.
+
+---
+
+## 5a. Session Log — UX, Accessibility & Productization (2026-09-03, second session)
+
+Changes made *after* the streaming-core work above, in order. Full detail with measurements lives in [`CHANGELOG.md`](file:///C:/Users/JulianB/source/repos/OpenWinSidecar/CHANGELOG.md); each item is also a git commit.
+
+1. **Console UX redesign → single page**: 4 tabs / ~30 buttons / 6 duplicate actions replaced by one page — iPad-display hero toggle, connect card, two setting rows, clients list, collapsed Maintenance/Preferences/log. Auto-targets the virtual display (monitor selector removed). Status-bar feedback replaces success MessageBoxes.
+2. **Console accessibility (color-vision)**: state colors moved to the blue/yellow axis (green/red collapsed to near-identical tones for red-green-deficient users); state is *never* hue alone — filled square = running, hollow circle = stopped, plus text; web-viewer badges carry markers (`⟳ RECONNECTING`, `⚠ JPEG INTRA`).
+3. **Console text-contrast pass (WCAG-measured)**: computed actual contrast ratios — the primary button **failed** AA (white on `#3B82F6` = 3.68:1); fixed to `#2563EB` (5.17:1), secondary text `#9A9AA3`→`#B8B8C2` (8.33:1), card borders 1.3:1→2.1:1.
+4. **Expander-header fix**: Maintenance/Preferences headers rendered black-on-dark (ToggleButton default style overrides the Expander's foreground) — fixed via `TextElement.Foreground` TemplateBinding.
+5. **Visual revamp (professional dashboard)**: branded header (icon tile + glow, tagline, status pill chip), gradient hero card, unified Card style with shadows, uppercase section labels, rounder controls. Verified via `--screenshot` self-capture (normal + expanded).
+6. **App icon**: multi-resolution `app.ico` (16–256 px, per-size redraws) — monitor + signal-wave design; wired into the exe (`ApplicationIcon`), main window, QR popup, and the system tray (the tray was showing the generic .NET icon).
+7. **Connect-by-QR**: QRCoder-generated code in the Console's Connect card (fully offline; auto-regenerates when the LAN IP changes; click to enlarge 420×420). Scan with the iPad camera → Safari → streaming.
+8. **Git + CHANGELOG**: repo initialized with a full-history snapshot commit; every subsequent change is an explanatory commit plus a dated CHANGELOG entry (what / why / how verified). `tools/` holds the PowerShell acceptance-test kit with its own README.
+9. **Rename completed**: `OpenSpacedesk` → `OpenWinSidecar` everywhere except the repo **root folder** (still `repos\OpenSpacedesk`; a process held it during the rename — run `Rename-Item` after closing it; no rebuild needed).
 
 ---
 
@@ -138,3 +153,14 @@ For incoming engineers or agents continuing this project, the following features
    - 4-Finger Pinch: Show Desktop (`Win + D`).
 5. **📈 Live Diagnostics Overlay**:
    - Toggleable HUD displaying live FPS, glass-to-glass latency, active bitrate, and packet loss telemetry.
+   - Related done-work to build on: the hub/sinks already compute ticks/sec, capture/compose/encode ms (in the service log); QR in the Console; the wire-test scripts in `tools/`.
+
+---
+
+## 7. Suggested Next Session (engineer/agent priorities)
+
+1. **Validate hardware HEVC on a real iPad** — the hvcC/Main-profile/GOP work is validated offline by ffprobe but unproven on Safari on-device; check for `[WebCodecs] Hardware HEVC VideoDecoder initialized with hvcC description` in the console, and note the residual risk: after long idles a backgrounded Safari may drop decoded-frame state (fix if observed: force-IDR on visibilitychange).
+2. **Audio streaming** (WASAPI loopback → Opus → AudioWorklet) — the single biggest remaining gap vs native feel.
+3. **Apple Pencil pressure/tilt** — zero native code needed; Safari pointer events expose it, inject via `InjectSyntheticPointerInput`.
+4. **QR + latency probe in the web viewer** (client `tsping:<us>` echo → badge RTT), then adaptive bitrate from TCP send backlog.
+5. **Engineering hygiene**: unit tests for the NAL parser / hvcC builder / WS text parser (the NAL-continuation bug is the case study); `e.keyCode` → `e.code`; concurrent-HEVC-session cap; Serilog; Windows-service registration + firewall rule; `DeploySettings()` to push `vdd_settings.xml` to the live locations; finish the root-folder rename.

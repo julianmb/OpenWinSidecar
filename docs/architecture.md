@@ -32,13 +32,15 @@ graph TD
 
         subgraph NetworkSubsystem["Multi-Port Transport"]
             HTTP["Multi-Port Listener (Ports 80, 8080, 28252)"]
+            AUTH["Access-Password Gate (auth handshake, pw-guarded /input)"]
             WS["WebSocket Binary Framing (SemaphoreSync)"]
             INP["Win32 SendInput (InputDispatcher)"]
             
             QSV --> WS
             JPEG --> WS
-            WS --> HTTP
-            HTTP --> INP
+            WS --> AUTH
+            AUTH --> INP
+            HTTP --> AUTH
         end
     end
 
