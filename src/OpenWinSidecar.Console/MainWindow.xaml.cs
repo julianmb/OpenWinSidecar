@@ -229,7 +229,11 @@ public partial class MainWindow : Window
         bool isRunning = _manager.ProcessManager.IsProcessRunning;
         bool isDisplayOn = _manager.IsVirtualDisplayActive;
 
-        StatusDot.Fill = isRunning ? (SolidColorBrush)FindResource("Good") : (SolidColorBrush)FindResource("Bad");
+        // Service state: shape + text + color together (filled square = running,
+        // hollow circle = stopped) so it reads under any color-vision deficiency
+        StatusShape.Background = isRunning ? (SolidColorBrush)FindResource("Good") : null;
+        StatusShape.BorderBrush = isRunning ? (SolidColorBrush)FindResource("Good") : (SolidColorBrush)FindResource("Bad");
+        StatusShape.CornerRadius = isRunning ? new CornerRadius(2) : new CornerRadius(5);
         TxtServiceState.Text = isRunning ? $"Running · PID {_manager.ProcessManager.ProcessId} · {_manager.ProcessManager.MemoryUsageMb:F0} MB" : "Stopped";
 
         // Hero card: single source of truth for the iPad display state

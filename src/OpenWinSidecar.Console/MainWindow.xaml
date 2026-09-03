@@ -18,8 +18,12 @@
         <SolidColorBrush x:Key="AccentHover" Color="#2F74E8"/>
         <SolidColorBrush x:Key="TextPrimary" Color="#E8E8EA"/>
         <SolidColorBrush x:Key="TextSecondary" Color="#9A9AA3"/>
-        <SolidColorBrush x:Key="Good" Color="#34D399"/>
-        <SolidColorBrush x:Key="Bad" Color="#F87171"/>
+        <!-- State colors chosen for color-vision accessibility: blue/yellow axis, never
+             red/green alone; every state also differs by text or shape, not just hue. -->
+        <SolidColorBrush x:Key="Good" Color="#7CB7FF"/>
+        <SolidColorBrush x:Key="GoodBg" Color="#1B3A5C"/>
+        <SolidColorBrush x:Key="Bad" Color="#F2C94C"/>
+        <SolidColorBrush x:Key="BadBg" Color="#4A3F14"/>
 
         <Style TargetType="Button">
             <Setter Property="Background" Value="#26262E"/>
@@ -233,7 +237,9 @@
                         <TextBlock Text="OpenWinSidecar" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{StaticResource Bad}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                        <!-- Service state: shape (filled square = running, hollow circle = stopped)
+                             plus color — never hue alone -->
+                        <Border x:Name="StatusShape" Width="9" Height="9" CornerRadius="2" BorderThickness="2" BorderBrush="{StaticResource Bad}" Background="{StaticResource Bad}" Margin="0,0,7,0" VerticalAlignment="Center"/>
                         <TextBlock x:Name="TxtServiceState" Text="Stopped" FontSize="13" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
                         <Button Content="Refresh" Click="BtnRefresh_Click" Padding="8,4" FontSize="12" Margin="14,0,0,0"/>
                     </StackPanel>
@@ -328,7 +334,7 @@
                                             <TextBlock Text="{Binding DisplayName}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
                                             <TextBlock Text="{Binding ResolutionText}" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="10,0,0,0" VerticalAlignment="Center"/>
                                         </StackPanel>
-                                        <Border Grid.Column="1" Background="#123527" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                                        <Border Grid.Column="1" Background="{StaticResource GoodBg}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" BorderBrush="{StaticResource Good}" BorderThickness="1">
                                             <TextBlock Text="connected" FontSize="10" Foreground="{StaticResource Good}"/>
                                         </Border>
                                     </Grid>

@@ -4,6 +4,21 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-03 — Color-vision accessibility pass (Console + web viewer)
+
+### Changed
+- **State colors moved to the blue/yellow axis** (Console `Good`/`Bad` brushes and every web-viewer badge/dot/error color).
+  - *Why:* the UI encoded state by hue alone in red/green — invisible to the ~8% of men with red-green color-vision deficiencies. Running/connected was green (`#34D399`), stopped/error red (`#F87171`/`#EF4444`) — two hues that collapse into near-identical olive/brown under deuteranopia/protanopia.
+  - *Palette:* running/connected/OK → light blue `#7CB7FF` on navy `#1B4A75`/`#1B3A5C`; stopped/warning/fallback → yellow `#F2C94C` on dark olive `#4A3F14`. Blue and yellow stay distinct under *all* common deficiencies.
+- **Shape + text redundancy, never hue alone:**
+  - Console service indicator: filled **square** (rounded 2px) = running, hollow **circle** = stopped, plus the "Running · PID…" / "Stopped" text.
+  - Web-viewer badges carry distinguishing prefixes: `⟳ RECONNECTING`, `⚠ JPEG INTRA` (fallback), plain `HEVC GPU`/`JPEG INTRA` (normal) — the icon/marker makes states readable with color entirely absent.
+  - Auth error text keeps its "Wrong password — try again." message (text carries the meaning; color now high-contrast yellow instead of dark red).
+  - Connected-clients badge: was dark-green text on dark-green chip (illegible even for full color vision) — now outlined blue chip on navy.
+- *Verified:* self-screenshot of the Console shows the filled blue square + Running text in the header and the outlined connected chip; solution builds clean. Remaining hardcoded colors audited — greys on dark backgrounds, all within contrast range.
+
+---
+
 ## 2026-09-03 — App icon for window, exe, and tray
 
 ### Added

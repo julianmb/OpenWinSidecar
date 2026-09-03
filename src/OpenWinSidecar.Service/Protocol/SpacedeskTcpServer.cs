@@ -586,8 +586,10 @@ public class SpacedeskTcpServer : IDisposable
             background: rgba(28, 28, 36, 0.95);
             border-color: rgba(96, 165, 250, 0.6);
         }}
-        .dot {{ width: 8px; height: 8px; background: #10B981; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
-        .codec-tag {{ background: #10B981; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px; }}
+        /* State colors on the blue/yellow axis (readable under red-green color-vision
+           deficiencies); every state is also distinguishable by shape or text alone. */
+        .dot {{ width: 8px; height: 8px; background: #7CB7FF; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
+        .codec-tag {{ background: #1B4A75; color: #CFE5FF; border: 1px solid #7CB7FF; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px; }}
         
         select, button {{
             background: rgba(30, 30, 38, 0.9);
@@ -718,7 +720,7 @@ public class SpacedeskTcpServer : IDisposable
             font-size: 15px; color: #fff; text-align: center; outline: none;
         }}
         #auth-input:focus {{ border-color: #3B82F6; }}
-        #auth-error {{ min-height: 16px; font-size: 12px; color: #F87171; margin-top: 8px; }}
+        #auth-error {{ min-height: 16px; font-size: 12px; color: #F2C94C; margin-top: 8px; }}
         .auth-btn {{
             width: 100%; margin-top: 10px;
             background: #3B82F6; border: none; border-radius: 12px;
@@ -1083,7 +1085,9 @@ public class SpacedeskTcpServer : IDisposable
             const badge = document.getElementById('codec-badge');
             if (badge) {{
                 badge.innerText = (c === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
-                badge.style.background = '#10B981';
+                badge.style.background = '#1B4A75';
+                badge.style.color = '#CFE5FF';
+                badge.style.borderColor = '#7CB7FF';
             }}
         }}
 
@@ -1143,7 +1147,9 @@ public class SpacedeskTcpServer : IDisposable
                 const badge = document.getElementById('codec-badge');
                 if (badge) {{
                     badge.innerText = (c === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
-                    badge.style.background = '#10B981';
+                    badge.style.background = '#1B4A75';
+                    badge.style.color = '#CFE5FF';
+                    badge.style.borderColor = '#7CB7FF';
                 }}
             }};
 
@@ -1187,7 +1193,7 @@ public class SpacedeskTcpServer : IDisposable
                     if (e.data === 'codec:intra') {{
                         if (codecSelect) codecSelect.value = 'intra';
                         const badge = document.getElementById('codec-badge');
-                        if (badge) {{ badge.innerText = 'JPEG INTRA'; badge.style.background = '#F59E0B'; }}
+                        if (badge) {{ badge.innerText = '⚠ JPEG INTRA'; badge.style.background = '#4A3F14'; badge.style.color = '#F2C94C'; badge.style.borderColor = '#F2C94C'; }}
                     }}
                     return;
                 }}
@@ -1262,8 +1268,10 @@ public class SpacedeskTcpServer : IDisposable
             ws.onclose = () => {{
                 const badge = document.getElementById('codec-badge');
                 if (badge) {{
-                    badge.innerText = 'RECONNECTING...';
-                    badge.style.background = '#EF4444';
+                    badge.innerText = '⟳ RECONNECTING';
+                    badge.style.background = '#4A3F14';
+                    badge.style.color = '#F2C94C';
+                    badge.style.borderColor = '#F2C94C';
                 }}
                 setTimeout(connectWs, 1000);
             }};
