@@ -1,4 +1,4 @@
-param([string]$Password = "test123")
+param([string]$Password = "123")
 
 $ws = New-Object System.Net.WebSockets.ClientWebSocket
 $ct = [System.Threading.CancellationToken]::None
@@ -22,21 +22,44 @@ function Receive-Message {
     return @{ kind = "binary"; size = $ms.Length }
 }
 
-# 1. Expect auth:required
+# 1. Expect auth:required (or the challenge directly)
 $m1 = Receive-Message $ws $ct $buf
 Write-Output ("STEP1 (expect auth:required): {0} '{1}'" -f $m1.kind, $(if ($m1.kind -eq 'text') { $m1.data } else { $m1.size }))
 
-# 2. Send wrong password
-$wrong = [System.Text.Encoding]::UTF8.GetBytes("auth:WRONG-$Password")
+# 1b. Expect authreq:<challenge> — the challenge for attempt 1
+$m = Receive-Message $ws $ct $buf
+$challenge = ""
+if ($m.kind -eq 'text' -and $m.data.StartsWith('authreq:')) {
+    $challenge = $m.data.Substring('authreq:'.Length)
+    Write-Output ("STEP1b (challenge):           {0}" -f $challenge)
+}
+
+# SHA-256 hex of UTF8(password + challenge) — matches the server's expectation
+function Get-AuthHash([string]$pw, [string]$chal) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($pw + $chal)
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+# 2. Send wrong response (hash of the wrong password + challenge)
+$wrong = [System.Text.Encoding]::UTF8.GetBytes("auth:" + (Get-AuthHash "WRONG-$Password" $challenge))
 $ws.SendAsync([ArraySegment[byte]]::new($wrong), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $ct).Wait()
 $m2 = Receive-Message $ws $ct $buf
 Write-Output ("STEP2 (expect auth:denied):   {0} '{1}'" -f $m2.kind, $(if ($m2.kind -eq 'text') { $m2.data } else { $m2.size }))
 
-# 3. Send correct password
-$right = [System.Text.Encoding]::UTF8.GetBytes("auth:$Password")
+# 3. Server sent a FRESH challenge for attempt 2 — read it, then answer correctly
+$m = Receive-Message $ws $ct $buf
+$challenge2 = ""
+if ($m.kind -eq 'text' -and $m.data.StartsWith('authreq:')) {
+    $challenge2 = $m.data.Substring('authreq:'.Length)
+}
+$right = [System.Text.Encoding]::UTF8.GetBytes("auth:" + (Get-AuthHash $Password $challenge2))
 $ws.SendAsync([ArraySegment[byte]]::new($right), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $ct).Wait()
 $m3 = Receive-Message $ws $ct $buf
 Write-Output ("STEP3 (expect auth:ok):       {0} '{1}'" -f $m3.kind, $(if ($m3.kind -eq 'text') { $m3.data } else { $m3.size }))
+
 
 # 4. Count frames received in 10 seconds (idle-skip check: static desktop => few frames)
 $frames = 0
