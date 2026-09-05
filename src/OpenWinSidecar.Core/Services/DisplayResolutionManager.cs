@@ -162,6 +162,53 @@ public class DisplayResolutionManager
         return modes.OrderByDescending(m => m.Width * m.Height).ThenByDescending(m => m.RefreshRate).ToList();
     }
 
+    /// <summary>
+    /// Switches the virtual display to the supported mode whose aspect ratio best matches
+    /// the connecting client's screen, so the stream fills the iPad edge-to-edge with no
+    /// letterbox bars. Idempotent: if the current aspect already matches (within 0.5%),
+    /// nothing happens — repeated set_res messages cannot cause mode-change churn.
+    /// Returns the applied mode, or null when no virtual display/mode was available.
+    /// </summary>
+    public static DisplayModeInfo? MatchVirtualDisplayToClient(int clientWidth, int clientHeight)
+    {
+        try
+        {
+            if (clientWidth <= 0 || clientHeight <= 0) return null;
+
+            var virtualMonitor = GetAllMonitorsDetailed().FirstOrDefault(m => m.IsVirtual);
+            if (virtualMonitor == null || virtualMonitor.SupportedModes.Count == 0) return null;
+
+            double clientAspect = (double)clientWidth / clientHeight;
+            double currentAspect = (double)virtualMonitor.Width / virtualMonitor.Height;
+
+            // Already matched — no mode change (avoids churn from repeated syncs)
+            if (Math.Abs(currentAspect - clientAspect) / clientAspect <= 0.005)
+                return new DisplayModeInfo { Width = virtualMonitor.Width, Height = virtualMonitor.Height, RefreshRate = virtualMonitor.RefreshRate };
+
+            // Best supported mode: closest aspect, then the largest area (sharpest at 2x-class)
+            var best = virtualMonitor.SupportedModes
+                .OrderBy(m => Math.Abs((double)m.Width / m.Height - clientAspect) / clientAspect)
+                .ThenByDescending(m => m.Width * m.Height)
+                .First();
+
+            double bestAspect = (double)best.Width / best.Height;
+            // Only switch when it meaningfully improves the aspect match
+            if (Math.Abs(bestAspect - clientAspect) / clientAspect >= Math.Abs(currentAspect - clientAspect) / clientAspect)
+                return null;
+
+            if (SetDisplayResolution(virtualMonitor.DeviceName, best.Width, best.Height, best.RefreshRate))
+            {
+                Console.WriteLine($"[DisplayManager] Virtual display matched to client aspect: {best.Width}x{best.Height} @ {best.RefreshRate}Hz (client {clientWidth}x{clientHeight})");
+                return best;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DisplayManager] MatchVirtualDisplayToClient error: {ex.Message}");
+        }
+        return null;
+    }
+
     public static bool SetDisplayResolution(string deviceName, int targetWidth, int targetHeight, int refreshRate = 0)
     {
         try

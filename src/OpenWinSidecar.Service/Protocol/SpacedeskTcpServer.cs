@@ -293,6 +293,12 @@ public class SpacedeskTcpServer : IDisposable
                                 sink.TargetWidth = w;
                                 sink.TargetHeight = h;
                                 Console.WriteLine($"[Resolution] Target resolution set: {w}x{h}");
+
+                                // Aspect-match the virtual display to the client's screen so the
+                                // stream fills it edge-to-edge (idempotent — skips when matched)
+                                var applied = DisplayResolutionManager.MatchVirtualDisplayToClient(w, h);
+                                if (applied != null)
+                                    Console.WriteLine($"[Resolution] Virtual display mode: {applied.Width}x{applied.Height} @ {applied.RefreshRate}Hz");
                             }
                         }
                         else if (text.StartsWith("dpi:"))
