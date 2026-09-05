@@ -1,7 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.4.3" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
     <ProjectReference Include="..\OpenWinSidecar.Core\OpenWinSidecar.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -11,8 +17,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <RootNamespace>OpenWinSidecar.Console</RootNamespace>
-    <AssemblyName>OpenWinSidecar.Console</AssemblyName>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

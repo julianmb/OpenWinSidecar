@@ -82,6 +82,16 @@ public class VirtualDisplayManager
     {
         try
         {
+            var monitors = DisplayResolutionManager.GetAllMonitorsDetailed();
+            if (monitors.Any(m => m.IsVirtual))
+            {
+                return true;
+            }
+        }
+        catch { }
+
+        try
+        {
             var psi = new ProcessStartInfo
             {
                 FileName = "pnputil.exe",
@@ -95,6 +105,10 @@ public class VirtualDisplayManager
             {
                 string output = p.StandardOutput.ReadToEnd();
                 p.WaitForExit(2000);
+                if (output.Contains("Status:                     Disabled", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
                 if (output.Contains("Status:                     Started", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
@@ -103,29 +117,22 @@ public class VirtualDisplayManager
         }
         catch { }
 
-        try
-        {
-            var monitors = DisplayResolutionManager.GetAllMonitorsDetailed();
-            return monitors.Any(m => m.IsVirtual || m.Index >= 2);
-        }
-        catch
-        {
-            return false;
-        }
+        return false;
     }
 
     public static bool DisableVirtualDisplay()
     {
         bool success = false;
+        var devconPath = FindProjectFile(@"drivers\VDD\control\Dependencies\devcon.exe");
+
         try
         {
-            var devconPath = FindProjectFile(@"drivers\VDD\control\Dependencies\devcon.exe");
             if (File.Exists(devconPath))
             {
                 var psi = new ProcessStartInfo
                 {
                     FileName = devconPath,
-                    Arguments = "disable \"ROOT\\DISPLAY\\0000\"",
+                    Arguments = "disable \"@ROOT\\DISPLAY\\0000\"",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
@@ -136,29 +143,32 @@ public class VirtualDisplayManager
         }
         catch { }
 
-        try
-        {
-            var psiPnp = new ProcessStartInfo
-            {
-                FileName = "pnputil.exe",
-                Arguments = "/disable-device \"ROOT\\DISPLAY\\0000\"",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var pPnp = Process.Start(psiPnp);
-            pPnp?.WaitForExit(3000);
-            if (pPnp?.ExitCode == 0) success = true;
-        }
-        catch { }
-
         if (!success)
+        {
+            try
+            {
+                var psiPnp = new ProcessStartInfo
+                {
+                    FileName = "pnputil.exe",
+                    Arguments = "/disable-device \"ROOT\\DISPLAY\\0000\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var pPnp = Process.Start(psiPnp);
+                pPnp?.WaitForExit(3000);
+                if (pPnp?.ExitCode == 0) success = true;
+            }
+            catch { }
+        }
+
+        if (!success && File.Exists(devconPath))
         {
             try
             {
                 var psiElevated = new ProcessStartInfo
                 {
-                    FileName = "powershell.exe",
-                    Arguments = "-NoProfile -Command \"pnputil /disable-device 'ROOT\\DISPLAY\\0000'\"",
+                    FileName = devconPath,
+                    Arguments = "disable \"@ROOT\\DISPLAY\\0000\"",
                     UseShellExecute = true,
                     Verb = "runas",
                     WindowStyle = ProcessWindowStyle.Hidden
@@ -177,15 +187,16 @@ public class VirtualDisplayManager
     public static bool EnableVirtualDisplay()
     {
         bool success = false;
+        var devconPath = FindProjectFile(@"drivers\VDD\control\Dependencies\devcon.exe");
+
         try
         {
-            var devconPath = FindProjectFile(@"drivers\VDD\control\Dependencies\devcon.exe");
             if (File.Exists(devconPath))
             {
                 var psi = new ProcessStartInfo
                 {
                     FileName = devconPath,
-                    Arguments = "enable \"ROOT\\DISPLAY\\0000\"",
+                    Arguments = "enable \"@ROOT\\DISPLAY\\0000\"",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
@@ -196,29 +207,32 @@ public class VirtualDisplayManager
         }
         catch { }
 
-        try
-        {
-            var psiPnp = new ProcessStartInfo
-            {
-                FileName = "pnputil.exe",
-                Arguments = "/enable-device \"ROOT\\DISPLAY\\0000\"",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var pPnp = Process.Start(psiPnp);
-            pPnp?.WaitForExit(3000);
-            if (pPnp?.ExitCode == 0) success = true;
-        }
-        catch { }
-
         if (!success)
+        {
+            try
+            {
+                var psiPnp = new ProcessStartInfo
+                {
+                    FileName = "pnputil.exe",
+                    Arguments = "/enable-device \"ROOT\\DISPLAY\\0000\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var pPnp = Process.Start(psiPnp);
+                pPnp?.WaitForExit(3000);
+                if (pPnp?.ExitCode == 0) success = true;
+            }
+            catch { }
+        }
+
+        if (!success && File.Exists(devconPath))
         {
             try
             {
                 var psiElevated = new ProcessStartInfo
                 {
-                    FileName = "powershell.exe",
-                    Arguments = "-NoProfile -Command \"pnputil /enable-device 'ROOT\\DISPLAY\\0000'\"",
+                    FileName = devconPath,
+                    Arguments = "enable \"@ROOT\\DISPLAY\\0000\"",
                     UseShellExecute = true,
                     Verb = "runas",
                     WindowStyle = ProcessWindowStyle.Hidden
@@ -246,7 +260,7 @@ public class VirtualDisplayManager
                 var psi = new ProcessStartInfo
                 {
                     FileName = devconPath,
-                    Arguments = "restart \"ROOT\\DISPLAY\\0000\"",
+                    Arguments = "restart \"@ROOT\\DISPLAY\\0000\"",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };

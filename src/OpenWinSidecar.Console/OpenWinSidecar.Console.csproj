@@ -2,12 +2,12 @@
 
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.4.3" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
     <ProjectReference Include="..\OpenWinSidecar.Core\OpenWinSidecar.Core.csproj" />
   </ItemGroup>
 
-  <!-- Copy the icon next to the exe so the WinForms tray NotifyIcon can load it at runtime -->
   <ItemGroup>
-    <Content Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <PropertyGroup>

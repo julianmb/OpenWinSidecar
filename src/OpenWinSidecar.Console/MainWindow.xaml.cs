@@ -25,6 +25,19 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        try
+        {
+            var appIcon = LoadAppIcon();
+            if (appIcon != null)
+            {
+                Icon = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                    appIcon.Handle,
+                    Int32Rect.Empty,
+                    BitmapSizeOptions.FromEmptyOptions());
+            }
+        }
+        catch { }
+
         InitializeSystemTray();
 
         // --screenshot <path> [--expand]: render the window to a PNG and exit (UI diagnostics / CI)
@@ -92,27 +105,31 @@ public partial class MainWindow : Window
     {
         try
         {
-            // In expanded mode render the whole content panel (unclipped by the window viewport)
+            double width = ActualWidth > 0 ? ActualWidth : (Width > 0 ? Width : 920);
+            double height = ActualHeight > 0 ? ActualHeight : (Height > 0 ? Height : 720);
             System.Windows.Media.Visual visual = this;
-            double width = ActualWidth, height = ActualHeight;
             if (_expandAllForScreenshot && MainContent.ActualHeight > 0)
             {
                 visual = MainContent;
-                width = MainContent.ActualWidth;
+                width = MainContent.ActualWidth > 0 ? MainContent.ActualWidth : 660;
                 height = MainContent.ActualHeight;
             }
+
+            Measure(new System.Windows.Size(width, height));
+            Arrange(new System.Windows.Rect(0, 0, width, height));
+            UpdateLayout();
 
             var rtb = new RenderTargetBitmap((int)width, (int)height, 96, 96, PixelFormats.Pbgra32);
             rtb.Render(visual);
 
-            var encoder = new BmpBitmapEncoder();
+            var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(rtb));
             using var stream = System.IO.File.Create(path);
             encoder.Save(stream);
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Screenshot failed: {ex.Message}", "OpenWinSidecar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            try { System.IO.File.WriteAllText(path + ".err.txt", ex.ToString()); } catch { }
         }
     }
 
@@ -227,7 +244,7 @@ public partial class MainWindow : Window
     private void UpdateUi()
     {
         bool isRunning = _manager.ProcessManager.IsProcessRunning;
-        bool isDisplayOn = _manager.IsVirtualDisplayActive;
+        bool isDisplayOn = isRunning && _manager.IsVirtualDisplayActive;
 
         // Service state: shape + text + color together (filled square = running,
         // hollow circle = stopped) so it reads under any color-vision deficiency
@@ -245,26 +262,47 @@ public partial class MainWindow : Window
         if (isDisplayOn)
         {
             var virtualMonitor = _manager.DisplayMonitors.FirstOrDefault(m => m.IsVirtual);
-            TxtDisplayState.Text = isRunning ? "On — streaming" : "On";
+            TxtDisplayState.Text = "On — streaming";
             TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "Good");
             TxtDisplayDetail.Text = virtualMonitor != null
                 ? $"{virtualMonitor.DeviceName} · {virtualMonitor.Width}×{virtualMonitor.Height} @ {virtualMonitor.RefreshRate} Hz"
-                : "Virtual display active";
+                : "Virtual display active & streaming";
             BtnToggleDisplay.Content = "Turn off";
+            BtnToggleDisplay.Style = (Style)FindResource("DangerButton");
         }
         else
         {
             TxtDisplayState.Text = "Off";
             TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
-            TxtDisplayDetail.Text = "The virtual display is disabled";
+            TxtDisplayDetail.Text = "The virtual display is offline — click Turn on to stream";
             BtnToggleDisplay.Content = "Turn on";
+            BtnToggleDisplay.Style = (Style)FindResource("PrimaryButton");
         }
 
-        // Connect URL: prefer a real LAN endpoint over loopback
-        var endpoint = _manager.NetworkEndpoints.FirstOrDefault(e =>
-                           !e.PrimaryIpAddress.StartsWith("127.") && !e.PrimaryIpAddress.StartsWith("169.254"))
-                       ?? _manager.NetworkEndpoints.FirstOrDefault();
-        TxtConnectUrl.Text = endpoint != null ? $"http://{endpoint.PrimaryIpAddress}:8080" : "http://localhost:8080";
+        // Connect URL & network endpoint selection (prioritize Wi-Fi and USB)
+        var endpoints = _manager.NetworkEndpoints.Where(e => e.Priority > 0).ToList();
+        if (endpoints.Count == 0) endpoints = _manager.NetworkEndpoints;
+
+        var prevSelected = CmbNetworkEndpoints.SelectedItem as NetworkEndpointInfo;
+        string? prevIp = prevSelected?.PrimaryIpAddress;
+
+        CmbNetworkEndpoints.SelectionChanged -= CmbNetworkEndpoints_SelectionChanged;
+        CmbNetworkEndpoints.ItemsSource = endpoints;
+
+        var targetEndpoint = endpoints.FirstOrDefault(e => e.PrimaryIpAddress == prevIp)
+                             ?? endpoints.FirstOrDefault();
+
+        if (targetEndpoint != null)
+        {
+            CmbNetworkEndpoints.SelectedItem = targetEndpoint;
+            TxtConnectUrl.Text = $"http://{targetEndpoint.PrimaryIpAddress}:8080";
+        }
+        else
+        {
+            TxtConnectUrl.Text = "http://localhost:8080";
+        }
+        CmbNetworkEndpoints.SelectionChanged += CmbNetworkEndpoints_SelectionChanged;
+
         UpdateQrCode(TxtConnectUrl.Text);
 
         // Clients
@@ -275,22 +313,58 @@ public partial class MainWindow : Window
         ClientsList.ItemsSource = clients;
     }
 
+    private void CmbNetworkEndpoints_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CmbNetworkEndpoints.SelectedItem is NetworkEndpointInfo endpoint)
+        {
+            TxtConnectUrl.Text = $"http://{endpoint.PrimaryIpAddress}:8080";
+            UpdateQrCode(TxtConnectUrl.Text);
+            SetStatus($"Active connection endpoint switched to {endpoint.DisplayLabel}");
+        }
+    }
+
     // ----- Primary action -----
 
-    private void BtnToggleDisplay_Click(object sender, RoutedEventArgs e)
+    private async void BtnToggleDisplay_Click(object sender, RoutedEventArgs e)
     {
-        ToggleDisplay(on: !_manager.IsVirtualDisplayActive);
+        // Explicitly check current button content & operational state
+        bool shouldTurnOn = BtnToggleDisplay.Content?.ToString() == "Turn on"
+                            || !_manager.ProcessManager.IsProcessRunning
+                            || !_manager.IsVirtualDisplayActive;
+
+        await ToggleDisplayAsync(shouldTurnOn);
     }
 
     private void ToggleDisplay(bool on)
     {
-        var (ok, msg) = on
-            ? _manager.EnableVirtualDisplayAndStartService()
-            : _manager.DisableVirtualDisplayAndStopService();
+        _ = ToggleDisplayAsync(on);
+    }
 
-        SetStatus(msg);
-        _notifyIcon?.ShowBalloonTip(2000, "OpenWinSidecar", msg, Forms.ToolTipIcon.Info);
-        _ = RefreshSoonAsync();
+    private async Task ToggleDisplayAsync(bool on)
+    {
+        BtnToggleDisplay.IsEnabled = false;
+        try
+        {
+            var (ok, msg) = on
+                ? _manager.EnableVirtualDisplayAndStartService()
+                : _manager.DisableVirtualDisplayAndStopService();
+
+            SetStatus(msg);
+            _notifyIcon?.ShowBalloonTip(2000, "OpenWinSidecar", msg, Forms.ToolTipIcon.Info);
+
+            // Immediate UI update so user gets instant visual feedback
+            UpdateUi();
+
+            await RefreshSoonAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Toggle error: {ex.Message}");
+        }
+        finally
+        {
+            BtnToggleDisplay.IsEnabled = true;
+        }
     }
 
     private async Task RefreshSoonAsync()
@@ -587,6 +661,23 @@ public partial class MainWindow : Window
             Process.Start(new ProcessStartInfo { FileName = "http://localhost:8080", UseShellExecute = true });
         }
         catch { }
+    }
+
+    private void BtnOpenBrowser_Click(object sender, RoutedEventArgs e) => OpenWebViewer();
+
+    private void Tab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (PanelPrefs == null || PanelLogs == null) return;
+        if (TabBtnPrefs.IsChecked == true)
+        {
+            PanelPrefs.Visibility = Visibility.Visible;
+            PanelLogs.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            PanelPrefs.Visibility = Visibility.Collapsed;
+            PanelLogs.Visibility = Visibility.Visible;
+        }
     }
 
     private void BtnCopyUrl_Click(object sender, RoutedEventArgs e)

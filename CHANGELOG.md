@@ -4,6 +4,27 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-05 — Two-column no-scroll layout + network endpoint intelligence (external agent session, audited & committed)
+
+Work performed in a parallel agent session, found **uncommitted** in the working tree afterward; audited, fixed, verified, and committed here.
+
+### Added (by the external agent)
+- **No-scroll two-column Console layout** (`MainWindow.xaml` rewrite): left column = iPad-display hero + Connect (URL/QR/endpoint) + Maintenance; right column = Display tuning + Connected clients + a Preferences/Service-Log segmented toggle. Everything fits without scrolling.
+- **Network endpoint intelligence** (`NetworkDiscoveryService.cs` + `NetworkEndpointInfo.cs` + adapter dropdown in the Connect card): interfaces are classified and prioritized — Apple USB tethering (100) → Wi-Fi LAN (90) → wired Ethernet (80) → VPN/overlay (30) → internal virtual switches (10, deprioritized). Fixes the bug where the connect URL defaulted to the **Hyper-V vEthernet `172.26.192.1`** address, which external devices cannot reach; the URL/QR now default to the real Wi-Fi IP.
+- **Power-toggle state fix** (`SpacedeskManager.cs`, `VirtualDisplayManager.cs`, `MainWindow.xaml.cs`): the toggle previously stuck on "Turn off" because refresh considered the driver node "Started" even with the service down. Now `IsVirtualDisplayActive = serviceRunning && driverEnabled`, stop/start set the flag immediately, and the button decides from content + operational state. Also: `devcon` instance syntax corrected (`@ROOT\DISPLAY\0000`), and driver-state detection checks `Disabled` status and the monitor enumeration.
+- **Startup-crash fix for the app icon** (`App.xaml.cs`, `MainWindow.xaml`): `Icon="app.ico"` in XAML resolved as a `pack://application:` URI, which only finds *Resource* items — `app.ico` is deployed as Content, so startup threw an unhandled `XamlParseException` and the window never appeared. The XAML attribute is removed; the icon is applied programmatically in the constructor via `LoadAppIcon()`. Global unhandled-exception logging to `console_crash.log` was added alongside.
+- **`run_console.bat`** quick launcher; `run_service_admin.bat` uses `%~dp0` instead of a hardcoded path; `System.ServiceProcess.ServiceController` package added; both `src/` and the `gh/` distribution mirror kept in sync.
+
+### Fixed (this audit)
+- **Adapter combo showed the raw type name** (`OpenWinSidecar.Core.Models.NetworkEndpointInfo`) instead of a friendly label: `DisplayMemberPath` doesn't render through the custom ComboBox template's selection-box ContentPresenter. Replaced with an explicit `ItemTemplate` binding `DisplayLabel`.
+- **Tofu glyphs in maintenance buttons** (variation-selector emoji rendering as boxes at button size): stripped to plain text labels, consistent with the emoji-free convention.
+- Minor: `ClassifyEndpoint`'s substring `tap`/`tun` VPN match can false-positive on names containing e.g. "Desktop" — left as-is (cosmetic category label only), noted for future cleanup.
+
+### Verified
+Clean build; self-screenshot shows the two-column layout, the friendly "📶 Wi-Fi LAN: 192.168.1.12 (WiFi BE200)" combo entry, correct `http://192.168.1.12:8080` URL/QR, clean button labels; service streams with the display on.
+
+---
+
 ## 2026-09-03 — Visual revamp (professional dashboard polish)
 
 ### Changed

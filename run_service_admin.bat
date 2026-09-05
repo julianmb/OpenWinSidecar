@@ -15,7 +15,7 @@ echo   Running as Administrator
 echo ============================================
 echo.
 
-cd /d "C:\Users\JulianB\source\repos\OpenWinSidecar"
+cd /d "%~dp0"
 dotnet run --project "src\OpenWinSidecar.Service\OpenWinSidecar.Service.csproj"
 
 pause

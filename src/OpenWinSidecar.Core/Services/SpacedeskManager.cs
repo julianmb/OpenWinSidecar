@@ -27,7 +27,9 @@ public class SpacedeskManager
             Clients = RegistryManager.GetClients();
             NetworkEndpoints = NetworkService.GetActiveNetworkEndpoints();
             DisplayMonitors = DisplayResolutionManager.GetAllMonitorsDetailed();
-            IsVirtualDisplayActive = VirtualDisplayManager.IsVirtualDisplayEnabled();
+
+            // The iPad Virtual Display is active when the streaming service is running and virtual driver is enabled
+            IsVirtualDisplayActive = ProcessManager.IsProcessRunning && VirtualDisplayManager.IsVirtualDisplayEnabled();
         });
 
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -40,6 +42,7 @@ public class SpacedeskManager
     {
         bool driverOk = VirtualDisplayManager.EnableVirtualDisplay();
         var (srvStarted, srvMsg) = ProcessManager.StartInteractive();
+        IsVirtualDisplayActive = srvStarted;
         
         if (srvStarted)
         {
@@ -55,6 +58,7 @@ public class SpacedeskManager
     {
         ProcessManager.StopInteractive();
         bool driverDisabled = VirtualDisplayManager.DisableVirtualDisplay();
+        IsVirtualDisplayActive = false;
         return (true, "Virtual 3rd Screen disabled and streaming service stopped.");
     }
 
@@ -66,6 +70,7 @@ public class SpacedeskManager
         ProcessManager.StopInteractive();
         ProcessManager.KillAllStaleProcesses();
         bool driverDisabled = VirtualDisplayManager.DisableVirtualDisplay();
+        IsVirtualDisplayActive = false;
         return (true, "Complete shutdown performed: Service terminated, stale processes cleaned, virtual display driver disabled.");
     }
 }

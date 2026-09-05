@@ -86,8 +86,9 @@ public class DisplayResolutionManager
                 bool isPrimary = (dev.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
                 bool isVirtual = dev.DeviceString.Contains("Idd", StringComparison.OrdinalIgnoreCase) ||
                                  dev.DeviceString.Contains("Virtual", StringComparison.OrdinalIgnoreCase) ||
+                                 dev.DeviceID.Contains("MttVDD", StringComparison.OrdinalIgnoreCase) ||
                                  dev.DeviceName.Contains("DISPLAY85", StringComparison.OrdinalIgnoreCase) ||
-                                 (!isPrimary && displayIndex >= 2);
+                                 dev.DeviceName.Contains("DISPLAY86", StringComparison.OrdinalIgnoreCase);
 
                 string friendlyName = isPrimary ? "🖥️ Primary Monitor" : (isVirtual ? "📱 Virtual iPad Display" : $"🖥️ Secondary Monitor ({dev.DeviceName})");
 
