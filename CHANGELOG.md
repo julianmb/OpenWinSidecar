@@ -4,6 +4,20 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-06 — Full-screen on iPad: virtual display aspect-matches the client
+
+### Fixed
+- **The stream letterboxed on iPads** (user: "not using the full iPad screen"). Root cause: the virtual display ran 2560×1440 (16:9) while iPads are ~3:2 — the viewer letterboxed with black bars no matter which preset was chosen, because `set_res` only resized the *stream*, never the *display mode*. Physically impossible to fill.
+
+### Fixed / Added
+- **`set_res` now aspect-matches the display**: `DisplayResolutionManager.MatchVirtualDisplayToClient` picks the supported VDD mode closest to the client's screen aspect (tie-break: largest area → native-class sharpness) and applies it. All iPad modes were already advertised by the driver.
+- **Idempotent**: skips when the current aspect already matches within 0.5% — repeated client syncs (fullscreen, resize, tab-visible) cannot cause mode-change churn.
+- **Mode transitions recover cleanly**: DXGI duplication invalidates on mode change → parser/producer reinit + GDI seed handle it; encoder restarts at the new resolution automatically.
+- *Verified live:* client `set_res:1180,820` → driver switched to **2360×1640 @ 120 Hz**, stream recomposed at the client aspect, repeated syncs caused no churn.
+- *Known limitation:* two iPads with different aspects on the same virtual display will fight over the mode (last wins).
+
+---
+
 ## 2026-09-06 — Light professional theme (Console)
 
 ### Changed
