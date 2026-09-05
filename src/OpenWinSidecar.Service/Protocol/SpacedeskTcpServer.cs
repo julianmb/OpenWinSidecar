@@ -623,7 +623,7 @@ public class SpacedeskTcpServer : IDisposable
         /* State colors on the blue/yellow axis (readable under red-green color-vision
            deficiencies); every state is also distinguishable by shape or text alone. */
         .dot {{ width: 8px; height: 8px; background: #7CB7FF; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
-        .codec-tag {{ background: #1B4A75; color: #CFE5FF; border: 1px solid #7CB7FF; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px; }}
+        .gear {{ font-size: 14px; opacity: 0.85; }}
         
         select, button {{
             background: rgba(30, 30, 38, 0.9);
@@ -705,6 +705,30 @@ public class SpacedeskTcpServer : IDisposable
             font-weight: 600;
             color: rgba(255, 255, 255, 0.7);
         }}
+        details.advanced {{
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            padding-top: 12px;
+            margin-top: 4px;
+        }}
+        details.advanced summary {{
+            font-size: 12.5px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            padding: 4px 0 10px;
+            list-style: none;
+        }}
+        details.advanced summary::before {{
+            content: '› ';
+            display: inline-block;
+            transition: transform 0.15s ease;
+        }}
+        details.advanced[open] summary::before {{
+            transform: rotate(90deg);
+        }}
+        details.advanced .setting-group + .setting-group {{
+            margin-top: 12px;
+        }}
         .btn-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -766,132 +790,137 @@ public class SpacedeskTcpServer : IDisposable
     <div id='container'>
         <div id='top-pill' onclick='toggleSettingsModal()'>
             <span class='dot'></span>
-            <span id='fps'>60 FPS</span>
-            <span id='codec-badge' class='codec-tag'>HEVC GPU</span>
-            <span id='res-label'>1180x820</span>
-            <span style='font-size:13px;opacity:0.85;margin-left:2px;'>⚙️</span>
+            <span id='fps'>— FPS</span>
+            <span class='gear'>⚙</span>
         </div>
 
         <div id='settings-modal' onclick='onModalBackdropClick(event)'>
             <div class='modal-card' onclick='event.stopPropagation()'>
-                <div class='modal-header'>
-                    <div style='display:flex;align-items:center;gap:8px;'>
-                        <span style='font-size:18px;'>⚙️</span>
-                        <span style='font-size:16px;font-weight:700;'>OpenWinSidecar Settings</span>
+                    <div class='modal-header'>
+                        <div style='display:flex;align-items:center;gap:8px;'>
+                            <span style='font-size:16px;font-weight:700;'>Settings</span>
+                        </div>
+                        <button class='modal-close' onclick='closeSettingsModal()'>✕</button>
                     </div>
-                    <button class='modal-close' onclick='closeSettingsModal()'>✕</button>
-                </div>
 
                 <div class='modal-body'>
                     <div class='setting-group'>
-                        <label>🖥️ Target Display</label>
+                        <label>Display</label>
                         <select id='display-select' onchange='changeDisplay(this.value)'>
                             {displayOptions}
                         </select>
                     </div>
 
                     <div class='setting-group'>
-                        <label>🚀 Video Codec</label>
-                        <select id='codec-select' onchange='changeCodec(this.value)'>
-                            <option value='hevc' selected>🚀 HEVC / H.265 (Intel Arc GPU Accelerated)</option>
-                            <option value='intra'>🖼️ Intra JPEG (Universal Fallback)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>📱 Screen & Device Resolution</label>
-                        <select id='res-select' onchange='changeResolutionPreset(this.value)'>
-                            <option value='auto' selected>✨ Auto-Detect My Device Screen (Recommended)</option>
-                            <optgroup label='📱 iPad 10.9-inch / 11-inch Air / 10th-11th Gen (59:41)'>
-                                <option value='1180x820'>1180 x 820 — @2x Logical (Low Latency / Crisp UI)</option>
-                                <option value='2360x1640'>2360 x 1640 — Native 2K Retina</option>
-                            </optgroup>
-                            <optgroup label='🚀 iPad Pro 11-inch (M4)'>
-                                <option value='1210x834'>1210 x 834 — @2x Logical</option>
-                                <option value='2420x1668'>2420 x 1668 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='🚀 iPad Pro 11-inch (1st–4th Gen)'>
-                                <option value='1194x834'>1194 x 834 — @2x Logical</option>
-                                <option value='2388x1668'>2388 x 1668 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='👑 iPad Pro 13-inch (M4)'>
-                                <option value='1376x1032'>1376 x 1032 — @2x Logical</option>
-                                <option value='2752x2064'>2752 x 2064 — Native 3K Retina</option>
-                            </optgroup>
-                            <optgroup label='👑 iPad Pro 12.9-inch / Air 13-inch (4:3)'>
-                                <option value='1366x1024'>1366 x 1024 — @2x Logical</option>
-                                <option value='2732x2048'>2732 x 2048 — Native 3K Retina</option>
-                            </optgroup>
-                            <optgroup label='📱 iPad 10.2-inch (7th–9th Gen) (4:3)'>
-                                <option value='1080x810'>1080 x 810 — @2x Logical</option>
-                                <option value='2160x1620'>2160 x 1620 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='📱 iPad 9.7-inch & iPad mini Retina (4:3)'>
-                                <option value='1024x768'>1024 x 768 — @2x Logical</option>
-                                <option value='2048x1536'>2048 x 1536 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='📱 iPad mini 8.3-inch (6th Gen & A17 Pro)'>
-                                <option value='1133x744'>1133 x 744 — @2x Logical</option>
-                                <option value='2266x1488'>2266 x 1488 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='💻 PC Standard (16:9 / 16:10)'>
-                                <option value='1920x1080'>1920 x 1080 — 1080p Full HD</option>
-                                <option value='2560x1440'>2560 x 1440 — 1440p QHD</option>
-                            </optgroup>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>🖥️ Windows Display Scale (Text & Icons Size)</label>
-                        <select id='dpi-select' onchange='changeDpi(this.value)'>
-                            <option value='100'>100% (Native / Smallest)</option>
-                            <option value='125'>125% (Comfortable)</option>
-                            <option value='150'>150% (Large Text & UI)</option>
-                            <option value='175' selected>175% (Recommended for iPad)</option>
-                            <option value='200'>200% (Extra Large / Touch Friendly)</option>
-                            <option value='225'>225% (Huge UI)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>🔍 UI Magnification (Zoom Viewport)</label>
-                        <select id='zoom-select' onchange='changeZoom(this.value)'>
-                            <option value='1.0' selected>🖥️ 1.0x (100% Full Desktop)</option>
-                            <option value='1.25'>📱 1.25x (125% Comfortable)</option>
-                            <option value='1.5'>🔎 1.5x (150% Large UI)</option>
-                            <option value='1.75'>✨ 1.75x (175% Extra Large)</option>
-                            <option value='2.0'>🔍 2.0x (200% Huge Touch UI)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>🖱️ Mouse Cursor Mode</label>
-                        <select id='cursor-select' onchange='changeCursorMode(this.value)'>
-                            <option value='host' selected>🖥️ Streamed Windows Cursor (Default - Zero Duplicate)</option>
-                            <option value='touch'>📱 Touch Tablet (Hide All Cursors)</option>
-                            <option value='client'>💻 Browser Cursor (Native OS)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>💎 Quality Preset</label>
+                        <label>Quality</label>
                         <select id='quality-select' onchange='changeQuality(this.value)'>
-                            <option value='50'>⚡ 50% Quality (Fastest)</option>
-                            <option value='65'>⚖️ 65% Quality (Balanced)</option>
-                            <option value='80' selected>💎 80% Quality (High Detail - Default)</option>
-                            <option value='90'>👑 90% Quality (Ultra Crisp)</option>
+                            <option value='50'>50% — fastest</option>
+                            <option value='65'>65% — balanced</option>
+                            <option value='80' selected>80% — high detail</option>
+                            <option value='90'>90% — ultra crisp</option>
                         </select>
                     </div>
 
                     <div class='setting-group'>
-                        <label>🛠️ Quick Actions</label>
+                        <label>Cursor</label>
+                        <select id='cursor-select' onchange='changeCursorMode(this.value)'>
+                            <option value='host' selected>Streamed Windows cursor</option>
+                            <option value='touch'>Hidden (touch mode)</option>
+                            <option value='client'>Browser cursor</option>
+                        </select>
+                    </div>
+
+                    <div class='setting-group'>
+                        <label>Actions</label>
                         <div class='btn-grid'>
-                            <button class='action-btn' onclick='syncResolutionNow()'>🎯 Apply Res</button>
-                            <button id='fit-btn' onclick='toggleFitMode()'>📐 Fit / Stretch</button>
-                            <button id='kbd-btn' onclick='toggleVirtualKeyboard()'>⌨️ Keyboard</button>
-                            <button id='fullscreen-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
+                            <button class='action-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
+                            <button id='kbd-btn' onclick='toggleVirtualKeyboard()'>⌨ Keyboard</button>
                         </div>
                     </div>
+
+                    <details class='advanced'>
+                        <summary>More options</summary>
+                        <div class='setting-group'>
+                            <label>Video codec</label>
+                            <select id='codec-select' onchange='changeCodec(this.value)'>
+                                <option value='hevc' selected>HEVC / H.265 (hardware)</option>
+                                <option value='intra'>Intra JPEG (fallback)</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Resolution</label>
+                            <select id='res-select' onchange='changeResolutionPreset(this.value)'>
+                                <option value='auto' selected>Auto-detect this device (recommended)</option>
+                                <optgroup label='iPad 10.9-inch / 11-inch Air / 10th-11th Gen'>
+                                    <option value='1180x820'>1180 x 820 — @2x logical</option>
+                                    <option value='2360x1640'>2360 x 1640 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 11-inch (M4)'>
+                                    <option value='1210x834'>1210 x 834 — @2x logical</option>
+                                    <option value='2420x1668'>2420 x 1668 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 11-inch (1st–4th Gen)'>
+                                    <option value='1194x834'>1194 x 834 — @2x logical</option>
+                                    <option value='2388x1668'>2388 x 1668 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 13-inch (M4)'>
+                                    <option value='1376x1032'>1376 x 1032 — @2x logical</option>
+                                    <option value='2752x2064'>2752 x 2064 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 12.9-inch / Air 13-inch'>
+                                    <option value='1366x1024'>1366 x 1024 — @2x logical</option>
+                                    <option value='2732x2048'>2732 x 2048 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad 10.2-inch (7th–9th Gen)'>
+                                    <option value='1080x810'>1080 x 810 — @2x logical</option>
+                                    <option value='2160x1620'>2160 x 1620 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad 9.7-inch & iPad mini Retina'>
+                                    <option value='1024x768'>1024 x 768 — @2x logical</option>
+                                    <option value='2048x1536'>2048 x 1536 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad mini 8.3-inch (6th Gen & A17 Pro)'>
+                                    <option value='1133x744'>1133 x 744 — @2x logical</option>
+                                    <option value='2266x1488'>2266 x 1488 — native</option>
+                                </optgroup>
+                                <optgroup label='PC Standard'>
+                                    <option value='1920x1080'>1920 x 1080 — Full HD</option>
+                                    <option value='2560x1440'>2560 x 1440 — QHD</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Windows display scale</label>
+                            <select id='dpi-select' onchange='changeDpi(this.value)'>
+                                <option value='100'>100% — native</option>
+                                <option value='125'>125%</option>
+                                <option value='150'>150%</option>
+                                <option value='175' selected>175% — recommended</option>
+                                <option value='200'>200%</option>
+                                <option value='225'>225%</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>UI magnification</label>
+                            <select id='zoom-select' onchange='changeZoom(this.value)'>
+                                <option value='1.0' selected>1.0x — full desktop</option>
+                                <option value='1.25'>1.25x</option>
+                                <option value='1.5'>1.5x</option>
+                                <option value='1.75'>1.75x</option>
+                                <option value='2.0'>2.0x</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Aspect</label>
+                            <div class='btn-grid'>
+                                <button id='fit-btn' onclick='toggleFitMode()'>📐 Fit / Stretch</button>
+                            </div>
+                        </div>
+                    </details>
                 </div>
 
                 <div class='modal-footer'>
@@ -926,7 +955,7 @@ public class SpacedeskTcpServer : IDisposable
         const container = document.getElementById('container');
         const pointerDot = document.getElementById('pointer-dot');
         const fpsLabel = document.getElementById('fps');
-        const resLabel = document.getElementById('res-label');
+        
         const resSelect = document.getElementById('res-select');
         const qualitySelect = document.getElementById('quality-select');
         const codecSelect = document.getElementById('codec-select');
@@ -1019,8 +1048,6 @@ public class SpacedeskTcpServer : IDisposable
         function changeCodec(val) {{
             if (ws && ws.readyState === WebSocket.OPEN) {{
                 ws.send('codec:' + val);
-                const badge = document.getElementById('codec-badge');
-                if (badge) badge.innerText = (val === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
             }}
             if (val === 'hevc') initHevcDecoder();
         }}
@@ -1087,7 +1114,6 @@ public class SpacedeskTcpServer : IDisposable
 
         function syncResolutionNow() {{
             const opt = getOptimalResolution();
-            resLabel.innerText = `${{opt.width}}x${{opt.height}}`;
             if (ws && ws.readyState === WebSocket.OPEN) {{
                 console.log(`[Sync] Adjusting to low-latency target resolution: ${{opt.width}}x${{opt.height}}`);
                 ws.send(`set_res:${{opt.width}},${{opt.height}}`);
@@ -1175,13 +1201,6 @@ public class SpacedeskTcpServer : IDisposable
             changeZoom(z);
             const sel = document.getElementById('display-select').value;
             if (ws && ws.readyState === WebSocket.OPEN) ws.send('display:' + sel);
-            const badge = document.getElementById('codec-badge');
-            if (badge) {{
-                badge.innerText = (c === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
-                badge.style.background = '#1B4A75';
-                badge.style.color = '#CFE5FF';
-                badge.style.borderColor = '#7CB7FF';
-            }}
         }}
 
         function showAuthPrompt(err) {{
@@ -1244,14 +1263,6 @@ public class SpacedeskTcpServer : IDisposable
 
                 const sel = document.getElementById('display-select').value;
                 ws.send('display:' + sel);
-
-                const badge = document.getElementById('codec-badge');
-                if (badge) {{
-                    badge.innerText = (c === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
-                    badge.style.background = '#1B4A75';
-                    badge.style.color = '#CFE5FF';
-                    badge.style.borderColor = '#7CB7FF';
-                }}
             }};
 
             ws.onmessage = async (e) => {{
@@ -1299,8 +1310,6 @@ public class SpacedeskTcpServer : IDisposable
                     // Server-side codec fallback notification (e.g. QSV encoder unavailable)
                     if (e.data === 'codec:intra') {{
                         if (codecSelect) codecSelect.value = 'intra';
-                        const badge = document.getElementById('codec-badge');
-                        if (badge) {{ badge.innerText = '⚠ JPEG INTRA'; badge.style.background = '#4A3F14'; badge.style.color = '#F2C94C'; badge.style.borderColor = '#F2C94C'; }}
                     }}
                     return;
                 }}
@@ -1373,13 +1382,8 @@ public class SpacedeskTcpServer : IDisposable
             }};
 
             ws.onclose = () => {{
-                const badge = document.getElementById('codec-badge');
-                if (badge) {{
-                    badge.innerText = '⟳ RECONNECTING';
-                    badge.style.background = '#4A3F14';
-                    badge.style.color = '#F2C94C';
-                    badge.style.borderColor = '#F2C94C';
-                }}
+                const fps = document.getElementById('fps');
+                if (fps) fps.textContent = '⟳ reconnecting';
                 setTimeout(connectWs, 1000);
             }};
         }}

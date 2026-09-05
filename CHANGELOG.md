@@ -4,6 +4,22 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-06 — Minimal viewer status pill + decluttered settings menu (iPad)
+
+### Changed
+User feedback: the status pill carried too much (FPS + codec + resolution), and the settings menu had too many options.
+
+- **Status pill slimmed to `[connection dot] FPS ⚙`** — codec and resolution indicators removed from the pill (the codec state is visible in the menu, resolution is now auto-matched by the server anyway). The FPS slot doubles as the connection indicator: `⟳ reconnecting` while the socket is down.
+- **Settings menu reorganized** into essentials + collapsible advanced:
+  - Always visible: **Display** (target monitor), **Quality**, **Cursor** mode, and Actions (**Fullscreen**, **Keyboard**).
+  - Moved under a collapsible **"More options"** section: Resolution presets, Video codec, Windows display scale, UI magnification, Fit/Stretch.
+  - Removed the redundant "Apply Res" button (the resolution select applies immediately).
+  - Emoji stripped from labels; codec options renamed ("HEVC / H.265 (hardware)", "Intra JPEG (fallback)").
+- The pill still opens the settings menu on tap, and the dot pulses as the live indicator.
+- *Verified:* served viewer HTML contains the new pill + advanced-details structure with zero stale references; streaming smoke test passes after the change.
+
+---
+
 ## 2026-09-06 — Full-screen on iPad: virtual display aspect-matches the client
 
 ### Fixed
