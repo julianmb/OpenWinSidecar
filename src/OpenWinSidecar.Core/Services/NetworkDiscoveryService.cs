@@ -55,6 +55,10 @@ public class NetworkDiscoveryService
     {
         string combined = (name + " " + desc).ToLowerInvariant();
 
+        // Word-boundary token match: "tap" must not match "Desktop", "tun" not "tuned", etc.
+        bool HasToken(string token) => combined.Split(' ', '-', '_', '(', ')', '#', '.')
+                                               .Any(t => t == token);
+
         // 1. Filter out unusable link-local APIPA addresses (169.254.x.x)
         if (ip.StartsWith("169.254.") || ip.StartsWith("127.") || string.IsNullOrEmpty(ip))
         {
@@ -62,30 +66,30 @@ public class NetworkDiscoveryService
         }
 
         // 2. Apple USB Tethering / NDIS / RNDIS / USB Ethernet (Highest priority - wired 0ms latency)
-        if (combined.Contains("apple") || combined.Contains("rndis") || combined.Contains("ncm") || 
-            combined.Contains("tether") || (combined.Contains("usb") && combined.Contains("ethernet")))
+        if (combined.Contains("apple") || HasToken("rndis") || HasToken("ncm") ||
+            HasToken("tether") || (combined.Contains("usb") && combined.Contains("ethernet")))
         {
             return (100, "⚡ USB Cable");
         }
 
         // 3. Physical Wi-Fi (Primary wireless interface for iPad Safari)
-        if (ifType.Contains("Wireless") || combined.Contains("wi-fi") || combined.Contains("wifi") || combined.Contains("wlan"))
+        if (ifType.Contains("Wireless") || combined.Contains("wi-fi") || combined.Contains("wifi") || HasToken("wlan"))
         {
             return (90, "📶 Wi-Fi LAN");
         }
 
         // 4. Virtual internal host-only switches (Hyper-V, WSL, Docker, VirtualBox, VMware)
         // 172.16-31 on vEthernet / Default Switch is internal to Windows and NOT accessible to external iPads!
-        if (combined.Contains("vethernet") || combined.Contains("hyper-v") || combined.Contains("wsl") || 
-            combined.Contains("docker") || combined.Contains("virtualbox") || combined.Contains("vmware") || 
+        if (combined.Contains("vethernet") || combined.Contains("hyper-v") || HasToken("wsl") ||
+            HasToken("docker") || combined.Contains("virtualbox") || combined.Contains("vmware") ||
             combined.Contains("host-only") || name.StartsWith("vEthernet", StringComparison.OrdinalIgnoreCase))
         {
             return (10, "💻 Virtual Switch (Internal)");
         }
 
         // 5. VPN / Overlay networks (Tailscale, ZeroTier, WireGuard, TAP, TUN)
-        if (combined.Contains("tailscale") || combined.Contains("zerotier") || combined.Contains("wireguard") ||
-            combined.Contains("openvpn") || combined.Contains("tap") || combined.Contains("tun"))
+        if (combined.Contains("tailscale") || HasToken("zerotier") || combined.Contains("wireguard") ||
+            combined.Contains("openvpn") || HasToken("tap") || HasToken("tun"))
         {
             return (30, "🔒 VPN");
         }

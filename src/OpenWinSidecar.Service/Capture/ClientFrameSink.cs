@@ -54,6 +54,7 @@ public sealed class ClientFrameSink : IDisposable
     private readonly SemaphoreSlim _frameSignal = new(0, 1);
     private int _composeLogged;
     private int _sendLogged;
+    private volatile bool _hevcRestartRequested;
 
     // ---- idle detection (written by the producer thread between composes) ----
     private bool _hasComposedOnce;
@@ -82,6 +83,14 @@ public sealed class ClientFrameSink : IDisposable
         DeviceName = deviceName;
         _hub.RegisterSink(this);
     }
+
+    /// <summary>
+    /// Requests an encoder restart so the next HEVC frame is a fresh IDR. Called from the
+    /// WebSocket input thread when the client tab becomes visible again — Safari may have
+    /// evicted decoded-frame state, and delta frames would then reference frames the new
+    /// decoder never had. The actual restart happens on the consumer thread.
+    /// </summary>
+    internal void ForceIdr() => _hevcRestartRequested = true;
 
     /// <summary>
     /// Called by the display producer on each tick. Returns false when the sink is still
@@ -305,6 +314,17 @@ public sealed class ClientFrameSink : IDisposable
             _ => 12000
         };
 
+        // Client requested a clean reference state (tab visible again): restart the encoder
+        // so the next frame is a fresh IDR
+        if (_hevcRestartRequested)
+        {
+            _hevcRestartRequested = false;
+            _hevcEncoder?.Shutdown();
+            _hevcEncoder = null;
+            _encoderWidth = _encoderHeight = _encoderBitrate = 0;
+            Console.WriteLine($"[Sink] {DeviceName}: HEVC encoder restarted for clean IDR");
+        }
+
         if (_hevcEncoder == null || _encoderWidth != width || _encoderHeight != height || _encoderBitrate != bitrate)
         {
             _hevcEncoder?.Shutdown();
@@ -335,6 +355,8 @@ public sealed class ClientFrameSink : IDisposable
             {
                 encoder.Shutdown();
                 Codec = StreamCodec.IntraTurbo;
+                var reason = HevcQsvStreamEncoder.ActiveEncoderCount >= 4 ? "encoder limit reached" : "encoder failed to start";
+                Console.WriteLine($"[Sink] {DeviceName}: HEVC unavailable ({reason}) — falling back to JPEG");
                 try
                 {
                     await WebCodecsFraming.SendTextAsync(_stream, _streamLock, "codec:intra", token);

@@ -25,6 +25,7 @@ public sealed class HevcQsvStreamEncoder : IDisposable
     private readonly Action<byte[], bool> _onPacketEncoded;
     private readonly Action<string, byte[]>? _onDescriptionReady;
     private bool _isInitialized;
+    private bool _counted; // only instances that reached a successful Initialize decrement on Shutdown
     private readonly object _syncLock = new();
 
     // ---- Annex-B parser state (single reader thread) ----
@@ -44,6 +45,11 @@ public sealed class HevcQsvStreamEncoder : IDisposable
     private long _lastDataTickMs = Environment.TickCount64;
 
     public bool IsActive => _isInitialized && _ffmpegProc != null && !_ffmpegProc.HasExited;
+
+    /// <summary>Live count of running QSV encoder processes across all clients.</summary>
+    public static int ActiveEncoderCount => _activeEncoders;
+    private static int _activeEncoders;
+    private const int MaxEncoders = 4; // each is an ffmpeg process with QSV GPU surfaces behind it
 
     public HevcQsvStreamEncoder(Action<byte[], bool> onPacketEncoded, Action<string, byte[]>? onDescriptionReady = null)
     {
@@ -109,6 +115,13 @@ public sealed class HevcQsvStreamEncoder : IDisposable
             if (string.IsNullOrEmpty(ffmpegPath))
             {
                 Console.WriteLine("[HEVC QSV] FFmpeg executable not found.");
+                return false;
+            }
+
+            // Each encoder is an ffmpeg process holding QSV GPU surfaces — cap the total
+            if (_activeEncoders >= MaxEncoders)
+            {
+                Console.WriteLine($"[HEVC QSV] Encoder limit reached ({_activeEncoders}/{MaxEncoders}) — refusing new instance.");
                 return false;
             }
 
@@ -181,6 +194,8 @@ public sealed class HevcQsvStreamEncoder : IDisposable
                     null, TimeSpan.FromMilliseconds(33), TimeSpan.FromMilliseconds(33));
 
                 _isInitialized = true;
+                _counted = true;
+                Interlocked.Increment(ref _activeEncoders);
                 Console.WriteLine($"[HEVC QSV] Hardware HEVC Encoder started: {_width}x{_height} @ {_bitrateKbps} kbps, GOP 240");
                 return true;
             }
@@ -514,6 +529,11 @@ public sealed class HevcQsvStreamEncoder : IDisposable
     public void Shutdown()
     {
         _isInitialized = false;
+        if (_counted)
+        {
+            _counted = false;
+            Interlocked.Decrement(ref _activeEncoders);
+        }
         _cts?.Cancel();
         _auFlushTimer?.Dispose();
         _auFlushTimer = null;

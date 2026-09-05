@@ -248,6 +248,12 @@ public class SpacedeskTcpServer : IDisposable
                             // for diagnosing Safari-specific HEVC support issues
                             Console.WriteLine($"[WebSocket] Client decoder error: {text.Substring(7)}");
                         }
+                        else if (text == "forceidr")
+                        {
+                            // Tab became visible again: restart the client's encoder so the next
+                            // frame is a fresh IDR (protects against decoder state Safari evicted)
+                            sink.ForceIdr();
+                        }
                         else if (text.StartsWith("cursor:"))
                         {
                             var cMode = text.Substring(7).ToLowerInvariant();
@@ -1474,6 +1480,12 @@ public class SpacedeskTcpServer : IDisposable
         window.addEventListener('orientationchange', () => setTimeout(syncResolutionNow, 300));
         document.addEventListener('visibilitychange', () => {{
             if (document.visibilityState === 'visible') setTimeout(syncResolutionNow, 100);
+            // Returning from a backgrounded tab: Safari may have evicted decoder state, so
+            // ask the server to restart the encoder — the next frame is a fresh IDR and the
+            // delta chain can never reference frames the decoder no longer has.
+            if (document.visibilityState === 'visible' && authenticated && ws && ws.readyState === WebSocket.OPEN) {{
+                ws.send('forceidr');
+            }}
         }});
 
         connectWs();
