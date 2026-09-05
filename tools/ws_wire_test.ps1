@@ -1,4 +1,4 @@
-param([string]$Password = "564D7EC4")
+param([string]$Password = "123")
 
 $ws = New-Object System.Net.WebSockets.ClientWebSocket
 $ct = [System.Threading.CancellationToken]::None

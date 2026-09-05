@@ -240,6 +240,13 @@ public class SpacedeskTcpServer : IDisposable
                             // Only HEVC is genuinely encoded; every other selection receives JPEG
                             // intra frames, so the packet label must never claim h264/av1/hevc
                             sink.Codec = (cStr == "hevc" || cStr == "h265") ? StreamCodec.HEVC : StreamCodec.IntraTurbo;
+                            Console.WriteLine($"[WebSocket] Client requested codec: {sink.Codec}");
+                        }
+                        else if (text.StartsWith("decerr:"))
+                        {
+                            // Client-side WebCodecs decoder failure report — the primary signal
+                            // for diagnosing Safari-specific HEVC support issues
+                            Console.WriteLine($"[WebSocket] Client decoder error: {text.Substring(7)}");
                         }
                         else if (text.StartsWith("cursor:"))
                         {
@@ -955,6 +962,11 @@ public class SpacedeskTcpServer : IDisposable
                     }},
                     error: (e) => {{
                         console.warn('[WebCodecs HEVC Fallback]', e);
+                        // Report the failure reason to the server for diagnostics
+                        if (ws && ws.readyState === WebSocket.OPEN) {{
+                            const why = (e && (e.message || e.toString())) || 'unknown';
+                            ws.send('decerr:' + why);
+                        }}
                         changeCodec('intra');
                     }}
                 }});

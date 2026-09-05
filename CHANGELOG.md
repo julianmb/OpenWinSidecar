@@ -4,6 +4,18 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-05 — HEVC on-device test instrumentation
+
+### Added
+- **Client decoder-error reporting**: Safari's `VideoDecoder` error handler now sends `decerr:<message>` back to the server, which logs it — the primary diagnostic for whether iPads hardware-decode the HEVC stream (previously a failure was silent: the client just fell back to JPEG with no reason recorded server-side).
+- **Codec-request logging**: the server logs which codec the client requests per session.
+- Password rotated on this machine (`564D7EC4` → user-set); docs and test scripts synced. Access password currently `123` — weak, rotate via Console → Preferences.
+
+### Verified
+Local HEVC regression after the changes: authenticated client receives the Main-profile IDR (93 KB, hvcC `hvc1.1.40000000.L120.90`), idle-skip behavior normal. Ready for on-device iPad validation.
+
+---
+
 ## 2026-09-05 — Two-column no-scroll layout + network endpoint intelligence (external agent session, audited & committed)
 
 Work performed in a parallel agent session, found **uncommitted** in the working tree afterward; audited, fixed, verified, and committed here.
