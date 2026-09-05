@@ -4,6 +4,27 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-05 — Autonomous improvement batch (robustness, auth, keyboard, autostart)
+
+Ran while the user was away; every item is a previously identified improvement, implemented and verified locally. iPad HEVC validation is still the outstanding on-device test (service instrumented and ready — see the 2026-09-05 entry below).
+
+### Added
+- **Working "Start with Windows"**: the Console preference previously only wrote a registry flag nothing read. Now saving Preferences with it checked creates an HKCU Run key (`OpenWinSidecar` → `OpenWinSidecar.Console.exe --autostart`); at sign-in the Console brings the virtual display and streaming service up automatically (2.5 s settle delay first). Unchecking removes the key.
+- **Auth hardening — SHA-256 challenge-response**: the handshake previously sent the plaintext password over the WebSocket. Now each attempt gets a fresh random challenge (`authreq:<challenge>`) and the client answers with `SHA-256(password + challenge)` hex — a network sniffer only ever sees single-use hashes. Plaintext still accepted as a legacy-tools fallback (useless for replay); the match type is logged. The web viewer embeds a pure-JS SHA-256 (crypto.subtle is unavailable on non-secure `http://LAN-IP` contexts — this is why WSS wasn't the fix). Self-test verified against known vectors via node (`tools/sha256_test.js`).
+- **Force-IDR on tab-visible (HEVC robustness)**: Safari may evict decoded-frame state while the iPad tab is backgrounded; the next delta would then reference frames the fresh decoder never had → corruption until the next IDR (up to 4 s at GOP 240). The client now sends `forceidr` on `visibilitychange`, and the sink restarts its encoder (cross-thread-safe via a flag consumed on the consumer thread) so the next frame is a fresh IDR.
+- **HEVC concurrent session cap (4)**: each client encoder is an ffmpeg process holding QSV GPU surfaces; overflow clients get JPEG with a logged reason. Static counter with a per-instance counted flag (a naive decrement would have corrupted the shared count — Initialize calls Shutdown internally).
+- **tools/ additions**: `contrast_audit.ps1` + `contrast_candidates.ps1` (the WCAG measurement scripts used for the contrast passes), `make_icon.ps1` (regenerates `app.ico` per-size), `qsv_pace_test.ps1` (proves QSV output flows with paced input), `sha256_test.js`, `sync_gh_mirror.ps1` (robocopy `src/` → `gh/src/` — the GitHub mirror must be synced manually or it drifts).
+
+### Fixed
+- **Endpoint classifier false positives**: VPN tokens `tap`/`tun` were substring matches — an adapter named "Desktop…" would classify as VPN. Now word-boundary token matching for the ambiguous tokens.
+- **Crash-log path** was hardcoded to `C:\Users\JulianB\…`; now appends next to the executable with a temp-folder fallback, so earlier exceptions survive later ones.
+- **Keyboard forwarding** now sends physical-key (`e.code`) → Windows VK mappings instead of the deprecated `e.keyCode` (which breaks under IME input with 229 and shifts with active layouts). Falls back to `keyCode` for unmapped codes.
+
+### Verified
+Clean build; challenge-response auth end-to-end (wrong hash → denied, correct hash → ok, "challenge-response" match logged, plaintext fallback path still open for legacy tools); `/input` 403/200 guards; wire-integrity test clean.
+
+---
+
 ## 2026-09-05 — HEVC on-device test instrumentation
 
 ### Added

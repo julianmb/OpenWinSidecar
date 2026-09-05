@@ -1487,17 +1487,42 @@ public class SpacedeskTcpServer : IDisposable
         }}, {{ passive: false }});
 
         // --- Keyboard forwarding ---
+        // Physical-key (e.code) → Windows VK mapping: stable across active input layouts
+        // and immune to the IME keyCode-229 problem. Falls back to e.keyCode for codes
+        // not in the table (or legacy browsers without e.code).
+        const CODE_TO_VK = {{
+            Escape:27, Digit1:49, Digit2:50, Digit3:51, Digit4:52, Digit5:53, Digit6:54, Digit7:55, Digit8:56, Digit9:57, Digit0:48,
+            Minus:189, Equal:187, Backspace:8, Tab:9,
+            KeyQ:81, KeyW:87, KeyE:69, KeyR:82, KeyT:84, KeyY:89, KeyU:85, KeyI:73, KeyO:79, KeyP:80,
+            BracketLeft:219, BracketRight:221, Backslash:220, CapsLock:20,
+            KeyA:65, KeyS:83, KeyD:68, KeyF:70, KeyG:71, KeyH:72, KeyJ:74, KeyK:75, KeyL:76,
+            Semicolon:186, Quote:222, Enter:13,
+            KeyZ:90, KeyX:88, KeyC:67, KeyV:86, KeyB:66, KeyN:78, KeyM:77,
+            Comma:188, Period:190, Slash:191, Space:32,
+            Insert:45, Delete:46, Home:36, End:35, PageUp:33, PageDown:34,
+            ArrowLeft:37, ArrowUp:38, ArrowRight:39, ArrowDown:40,
+            Backquote:192,
+            F1:112, F2:113, F3:114, F4:115, F5:116, F6:117, F7:118, F8:119, F9:120, F10:121, F11:122, F12:123,
+            ShiftLeft:160, ShiftRight:161, ControlLeft:162, ControlRight:163, AltLeft:164, AltRight:165,
+            Numpad0:96, Numpad1:97, Numpad2:98, Numpad3:99, Numpad4:100, Numpad5:101, Numpad6:102, Numpad7:103, Numpad8:104, Numpad9:105,
+            NumpadMultiply:106, NumpadAdd:107, NumpadSubtract:109, NumpadDecimal:110, NumpadDivide:111
+        }};
+        function eventToVk(e) {{
+            if (e.code && CODE_TO_VK[e.code] !== undefined) return CODE_TO_VK[e.code];
+            return e.keyCode; // legacy fallback
+        }}
+
         document.addEventListener('keydown', (e) => {{
             if (!authenticated) return; // don't forward keystrokes while the password prompt is up
             if (ws && ws.readyState === WebSocket.OPEN) {{
-                ws.send('key:down,' + e.keyCode);
+                ws.send('key:down,' + eventToVk(e));
                 if (!e.metaKey && !e.ctrlKey) e.preventDefault();
             }}
         }});
         document.addEventListener('keyup', (e) => {{
             if (!authenticated) return;
             if (ws && ws.readyState === WebSocket.OPEN) {{
-                ws.send('key:up,' + e.keyCode);
+                ws.send('key:up,' + eventToVk(e));
                 e.preventDefault();
             }}
         }});

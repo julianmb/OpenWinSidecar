@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private bool _isExplicitExit = false;
     private readonly string? _screenshotPath;
     private readonly bool _expandAllForScreenshot;
+    private readonly bool _autoStartRequested;
 
     public MainWindow()
     {
@@ -51,6 +52,8 @@ public partial class MainWindow : Window
             _notifyIcon?.Dispose();
             _notifyIcon = null;
         }
+        // --autostart: launched at sign-in via the Run key — bring the display + service up
+        if (args.Contains("--autostart")) _autoStartRequested = true;
 
         _manager.ProcessManager.OnLogReceived += msg =>
         {
@@ -76,6 +79,14 @@ public partial class MainWindow : Window
             LoadSettingsIntoUi();
             await RefreshDataAsync();
             _timer.Start();
+
+            // Launched at sign-in via the Run key: bring the iPad display + service up
+            if (_autoStartRequested && !_manager.ProcessManager.IsProcessRunning)
+            {
+                await Task.Delay(2500); // let sign-in settle (network, driver enumeration)
+                ToggleDisplay(on: true);
+                SetStatus("Auto-start: virtual display and streaming service started.");
+            }
 
             if (_screenshotPath != null)
             {
@@ -729,7 +740,35 @@ public partial class MainWindow : Window
         };
 
         bool saved = _manager.RegistryManager.SaveSettings(s);
+        SetAutostartRunKey(ChkAutoStart.IsChecked == true);
         SetStatus(saved ? "Preferences saved." : "Could not save preferences (run as Administrator).");
+    }
+
+    /// <summary>
+    /// Makes 'Start with Windows' real: a per-user Run key launches the Console with
+    /// --autostart at sign-in, which enables the virtual display and starts streaming.
+    /// </summary>
+    private static void SetAutostartRunKey(bool enabled)
+    {
+        const string valueName = "OpenWinSidecar";
+        const string runKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(runKeyPath, writable: true);
+            if (key == null) return;
+
+            if (enabled)
+            {
+                var exe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OpenWinSidecar.Console.exe");
+                if (File.Exists(exe))
+                    key.SetValue(valueName, $"\"{exe}\" --autostart");
+            }
+            else
+            {
+                key.DeleteValue(valueName, throwOnMissingValue: false);
+            }
+        }
+        catch { }
     }
 
     private void ChkAutoPoll_Checked(object sender, RoutedEventArgs e) => _timer.Start();
