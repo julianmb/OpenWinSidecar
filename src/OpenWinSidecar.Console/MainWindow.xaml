@@ -4,29 +4,40 @@
         Title="OpenWinSidecar Console" Height="680" Width="1040"
         MinHeight="620" MinWidth="960"
         WindowStartupLocation="CenterScreen"
-        Background="#121216"
+        Background="#F2F3F6"
         FontFamily="Segoe UI Variable Text, Segoe UI, sans-serif"
         TextOptions.TextFormattingMode="Ideal"
         UseLayoutRounding="True">
 
     <Window.Resources>
-        <!-- WCAG-verified palette: high contrast, blue/yellow state axis -->
-        <SolidColorBrush x:Key="WindowBg" Color="#121216"/>
-        <SolidColorBrush x:Key="CardBg" Color="#1A1A21"/>
-        <SolidColorBrush x:Key="CardBgAlt" Color="#202027"/>
-        <SolidColorBrush x:Key="CardBorder" Color="#444452"/>
-        <SolidColorBrush x:Key="FieldBg" Color="#131317"/>
+        <!-- Light professional theme. WCAG-checked pairs (4.5:1 text minimum):
+             #1B1E26 on #FFFFFF 15.5:1 · #5C6270 on #FFFFFF 6.1:1 · white on #2563EB 5.2:1
+             #1D5CC0 on #E3EDFC 5.3:1 · #8A6300 on #FCF3D9 4.9:1 · #676D79 on #F2F3F6 4.6:1
+             State colors stay on the blue/yellow axis with shape/text redundancy. -->
+        <SolidColorBrush x:Key="WindowBg" Color="#F2F3F6"/>
+        <SolidColorBrush x:Key="HeaderBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="CardBgAlt" Color="#F7F9FD"/>
+        <SolidColorBrush x:Key="CardBorder" Color="#D9DCE4"/>
+        <SolidColorBrush x:Key="FieldBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="FieldBorder" Color="#CDD1DA"/>
         <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
-        <SolidColorBrush x:Key="AccentHover" Color="#1E5FD6"/>
-        <SolidColorBrush x:Key="AccentSoft" Color="#1B3A5C"/>
-        <SolidColorBrush x:Key="TextPrimary" Color="#ECECEE"/>
-        <SolidColorBrush x:Key="TextSecondary" Color="#B8B8C2"/>
-        <SolidColorBrush x:Key="Good" Color="#7CB7FF"/>
-        <SolidColorBrush x:Key="GoodBg" Color="#1B3A5C"/>
-        <SolidColorBrush x:Key="Bad" Color="#F2C94C"/>
-        <SolidColorBrush x:Key="BadBg" Color="#4A3F14"/>
+        <SolidColorBrush x:Key="AccentHover" Color="#1E56D6"/>
+        <SolidColorBrush x:Key="AccentPressed" Color="#1A4FC4"/>
+        <SolidColorBrush x:Key="AccentSoft" Color="#E3EDFC"/>
+        <SolidColorBrush x:Key="TextPrimary" Color="#1B1E26"/>
+        <SolidColorBrush x:Key="TextSecondary" Color="#5C6270"/>
+        <SolidColorBrush x:Key="TextTertiary" Color="#676D79"/>
+        <SolidColorBrush x:Key="Good" Color="#1D5CC0"/>
+        <SolidColorBrush x:Key="GoodBg" Color="#E3EDFC"/>
+        <SolidColorBrush x:Key="GoodBorder" Color="#B9CDF0"/>
+        <SolidColorBrush x:Key="Bad" Color="#8A6300"/>
+        <SolidColorBrush x:Key="BadBg" Color="#FCF3D9"/>
+        <SolidColorBrush x:Key="BadBorder" Color="#E3D49E"/>
+        <SolidColorBrush x:Key="Separator" Color="#E3E5EA"/>
 
-        <DropShadowEffect x:Key="CardShadow" Color="#000000" Opacity="0.3" BlurRadius="14" ShadowDepth="0"/>
+        <DropShadowEffect x:Key="CardShadow" Color="#33415C" Opacity="0.14" BlurRadius="14" ShadowDepth="2" Direction="270"/>
+        <DropShadowEffect x:Key="HeroShadow" Color="#2563EB" Opacity="0.20" BlurRadius="18" ShadowDepth="0"/>
 
         <Style x:Key="Card" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBg}"/>
@@ -41,14 +52,14 @@
         <Style x:Key="SectionLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="10.5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
             <Setter Property="Margin" Value="2,0,0,5"/>
         </Style>
 
         <Style TargetType="Button">
-            <Setter Property="Background" Value="#252530"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="BorderBrush" Value="#444452"/>
+            <Setter Property="BorderBrush" Value="{StaticResource FieldBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,6"/>
             <Setter Property="FontSize" Value="12.5"/>
@@ -62,14 +73,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#383848"/>
-                                <Setter TargetName="border" Property="BorderBrush" Value="#5C5C70"/>
+                                <Setter TargetName="border" Property="Background" Value="#F0F2F7"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#B9BEC9"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#1E1E26"/>
+                                <Setter TargetName="border" Property="Background" Value="#E4E7ED"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="border" Property="Opacity" Value="0.4"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.45"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -94,7 +105,7 @@
                                 <Setter TargetName="border" Property="Background" Value="{StaticResource AccentHover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#1A55C4"/>
+                                <Setter TargetName="border" Property="Background" Value="{StaticResource AccentPressed}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="border" Property="Opacity" Value="0.4"/>
@@ -106,8 +117,8 @@
         </Style>
 
         <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="#9E2A2B"/>
-            <Setter Property="BorderBrush" Value="#C23934"/>
+            <Setter Property="Background" Value="#C0392B"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Foreground" Value="#FFFFFF"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
@@ -115,16 +126,15 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#BD3031"/>
-                                <Setter TargetName="border" Property="BorderBrush" Value="#E04640"/>
+                                <Setter TargetName="border" Property="Background" Value="#A93226"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#7A1F20"/>
+                                <Setter TargetName="border" Property="Background" Value="#96281B"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="border" Property="Opacity" Value="0.4"/>
@@ -146,7 +156,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
-                            <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="#444452" BorderThickness="1" CornerRadius="7"/>
+                            <Border x:Name="border" Background="{TemplateBinding Background}" BorderBrush="{StaticResource FieldBorder}" BorderThickness="1" CornerRadius="7"/>
                             <ToggleButton Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
@@ -161,9 +171,9 @@
                                               TextElement.Foreground="{TemplateBinding Foreground}"/>
                             <Path Data="M 0 0 L 4 4 L 8 0 Z" Fill="{StaticResource TextSecondary}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" IsHitTestVisible="False"/>
                             <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade">
-                                <Border Background="#1A1A21" BorderBrush="#444452" BorderThickness="1" CornerRadius="7" Margin="0,4,0,0" MinWidth="{TemplateBinding ActualWidth}">
+                                <Border Background="#FFFFFF" BorderBrush="{StaticResource FieldBorder}" BorderThickness="1" CornerRadius="8" Margin="0,4,0,0" MinWidth="{TemplateBinding ActualWidth}">
                                     <Border.Effect>
-                                        <DropShadowEffect Color="#000000" Opacity="0.5" BlurRadius="12" ShadowDepth="2"/>
+                                        <DropShadowEffect Color="#33415C" Opacity="0.18" BlurRadius="14" ShadowDepth="2"/>
                                     </Border.Effect>
                                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                                         <ItemsPresenter/>
@@ -173,7 +183,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="BorderBrush" Value="#5C5C70"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#9AA2B1"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -184,10 +194,10 @@
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="{StaticResource FieldBg}"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="BorderBrush" Value="#444452"/>
+            <Setter Property="BorderBrush" Value="{StaticResource FieldBorder}"/>
             <Setter Property="Padding" Value="8,5"/>
             <Setter Property="FontSize" Value="12.5"/>
-            <Setter Property="CaretBrush" Value="#ECECEE"/>
+            <Setter Property="CaretBrush" Value="#1B1E26"/>
         </Style>
 
         <Style x:Key="SegmentTab" TargetType="RadioButton">
@@ -198,7 +208,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="bd" Background="#23232C" BorderBrush="#3D3D4A" BorderThickness="1" CornerRadius="6" Padding="12,5">
+                        <Border x:Name="bd" Background="#FFFFFF" BorderBrush="{StaticResource FieldBorder}" BorderThickness="1" CornerRadius="6" Padding="12,5">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -208,7 +218,7 @@
                                 <Setter Property="Foreground" Value="#FFFFFF"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="BorderBrush" Value="#5C5C70"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#9AA2B1"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -220,7 +230,7 @@
     <DockPanel>
 
         <!-- Top Header Bar -->
-        <Border DockPanel.Dock="Top" Background="#16161C" BorderBrush="#33333E" BorderThickness="0,0,0,1" Padding="18,10">
+        <Border DockPanel.Dock="Top" Background="{StaticResource HeaderBg}" BorderBrush="{StaticResource Separator}" BorderThickness="0,0,0,1" Padding="18,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -233,14 +243,11 @@
                     <Border Width="34" Height="34" CornerRadius="8" Margin="0,0,12,0" VerticalAlignment="Center">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#2563EB" Offset="0"/>
-                                <GradientStop Color="#1B3A5C" Offset="1"/>
+                                <GradientStop Color="#3B82F6" Offset="0"/>
+                                <GradientStop Color="#1E56D6" Offset="1"/>
                             </LinearGradientBrush>
                         </Border.Background>
-                        <Border.Effect>
-                            <DropShadowEffect Color="#14357B" Opacity="0.5" BlurRadius="10" ShadowDepth="0"/>
-                        </Border.Effect>
-                        <TextBlock Text="🖥️" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Image x:Name="HeaderIconImage" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
                     </Border>
 
                     <StackPanel VerticalAlignment="Center">
@@ -251,9 +258,9 @@
 
                 <!-- Header Actions & Live Status -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border x:Name="StatusChip" Background="{StaticResource BadBg}" BorderBrush="{StaticResource Bad}" BorderThickness="1" CornerRadius="12" Padding="9,4" VerticalAlignment="Center">
+                    <Border x:Name="StatusChip" Background="{StaticResource BadBg}" BorderBrush="{StaticResource BadBorder}" BorderThickness="1" CornerRadius="12" Padding="9,4" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
-                            <Border x:Name="StatusShape" Width="8" Height="8" CornerRadius="2" BorderThickness="2" BorderBrush="{StaticResource Bad}" Background="{StaticResource Bad}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <Border x:Name="StatusShape" Width="8" Height="8" CornerRadius="4" BorderThickness="1.5" BorderBrush="{StaticResource Bad}" Background="Transparent" Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="TxtServiceState" Text="Stopped" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Bad}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
@@ -264,7 +271,7 @@
         </Border>
 
         <!-- Bottom Status Bar -->
-        <Border DockPanel.Dock="Bottom" Background="#0E0E12" BorderBrush="#33333E" BorderThickness="0,1,0,0" Padding="18,6">
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource HeaderBg}" BorderBrush="{StaticResource Separator}" BorderThickness="0,1,0,0" Padding="18,6">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -276,7 +283,7 @@
         </Border>
 
         <!-- Main Dashboard Content (Compact 2-Column Grid - Fits in window without scrolling!) -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="14,10">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="14,12">
             <Grid x:Name="MainContent">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="1.18*"/>
@@ -288,15 +295,14 @@
 
                     <!-- Hero Card: iPad Display Power Switch -->
                     <TextBlock Text="IPAD VIRTUAL DISPLAY" Style="{StaticResource SectionLabel}"/>
-                    <Border BorderBrush="#2E4468" BorderThickness="1" CornerRadius="10" Padding="16,14" Margin="0,0,0,10">
+                    <Border BorderBrush="#C9D8F2" BorderThickness="1" CornerRadius="10" Padding="16,14" Margin="0,0,0,10">
                         <Border.Effect>
-                            <DropShadowEffect Color="#14357B" Opacity="0.35" BlurRadius="18" ShadowDepth="0"/>
+                            <DropShadowEffect Color="#2563EB" Opacity="0.18" BlurRadius="18" ShadowDepth="0"/>
                         </Border.Effect>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#22222B" Offset="0"/>
-                                <GradientStop Color="#1B2233" Offset="0.55"/>
-                                <GradientStop Color="#1B2C44" Offset="1"/>
+                                <GradientStop Color="#FFFFFF" Offset="0"/>
+                                <GradientStop Color="#EFF4FC" Offset="1"/>
                             </LinearGradientBrush>
                         </Border.Background>
                         <Grid>
@@ -337,7 +343,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBox x:Name="TxtConnectUrl" IsReadOnly="True" Background="#121217" BorderBrush="#444452" BorderThickness="1" FontFamily="Cascadia Mono, Consolas" FontSize="12.5" VerticalAlignment="Center" Padding="8,5" Text="http://…"/>
+                                    <TextBox x:Name="TxtConnectUrl" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="12.5" VerticalAlignment="Center" Padding="8,5" Text="http://…"/>
                                     <Button Grid.Column="1" Content="Copy" Click="BtnCopyUrl_Click" Padding="10,5" Margin="8,0,0,0"/>
                                 </Grid>
                                 <TextBlock Text="Scan QR with iPad camera or open in Safari. For wired 0ms latency, plug in USB cable and enable iPad Personal Hotspot." FontSize="11" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,8"/>
@@ -347,9 +353,9 @@
                             </StackPanel>
 
                             <!-- QR Code thumbnail (click to zoom) -->
-                            <Border Grid.Column="1" Background="#FFFFFF" CornerRadius="8" Padding="7" Margin="14,0,0,0" Cursor="Hand" ToolTip="Click to enlarge QR" VerticalAlignment="Center" MouseLeftButtonUp="QrCard_Click">
+                            <Border Grid.Column="1" Background="#FFFFFF" CornerRadius="8" Padding="7" Margin="14,0,0,0" Cursor="Hand" ToolTip="Click to enlarge QR" VerticalAlignment="Center" MouseLeftButtonUp="QrCard_Click" BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
                                 <Border.Effect>
-                                    <DropShadowEffect Color="#000000" Opacity="0.3" BlurRadius="10" ShadowDepth="0"/>
+                                    <DropShadowEffect Color="#33415C" Opacity="0.15" BlurRadius="10" ShadowDepth="0"/>
                                 </Border.Effect>
                                 <Image x:Name="QrImage" Width="106" Height="106"/>
                             </Border>
@@ -370,7 +376,7 @@
                                 <Button Content="Start elevated" Click="BtnStartElevated_Click" Margin="0,0,6,6"/>
                             </WrapPanel>
 
-                            <Separator Background="#2E2E38" Margin="0,2,0,8"/>
+                            <Separator Background="{StaticResource Separator}" Margin="0,2,0,8"/>
 
                             <!-- Custom Resolution Row -->
                             <Grid>
@@ -447,7 +453,7 @@
                                                 <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
                                                 <TextBlock Text="{Binding ResolutionText}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                             </StackPanel>
-                                            <Border Grid.Column="1" Background="{StaticResource GoodBg}" CornerRadius="5" Padding="7,2" VerticalAlignment="Center" BorderBrush="{StaticResource Good}" BorderThickness="1">
+                                            <Border Grid.Column="1" Background="{StaticResource GoodBg}" CornerRadius="5" Padding="7,2" VerticalAlignment="Center" BorderBrush="{StaticResource GoodBorder}" BorderThickness="1">
                                                 <TextBlock Text="connected" FontSize="10" Foreground="{StaticResource Good}"/>
                                             </Border>
                                         </Grid>
@@ -487,7 +493,7 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <Separator Background="#2E2E38" Margin="0,4,0,8"/>
+                                <Separator Background="{StaticResource Separator}" Margin="0,4,0,8"/>
 
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -507,8 +513,8 @@
                                     <RowDefinition Height="120"/>
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
-                                <Border Background="#0D0D11" BorderBrush="#3D3D4A" BorderThickness="1" CornerRadius="6" Padding="6">
-                                    <TextBox x:Name="TxtLogsConsole" Background="Transparent" Foreground="#B5D8B5" BorderThickness="0" FontFamily="Cascadia Mono, Consolas" FontSize="11" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+                                <Border Background="#F7F8FA" BorderBrush="{StaticResource FieldBorder}" BorderThickness="1" CornerRadius="6" Padding="6">
+                                    <TextBox x:Name="TxtLogsConsole" Background="Transparent" Foreground="#3A4150" BorderThickness="0" FontFamily="Cascadia Mono, Consolas" FontSize="11" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
                                 </Border>
                                 <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
                                     <Button Content="Copy" Click="BtnCopyLogs_Click" Padding="10,4" FontSize="11" Margin="0,0,6,0"/>

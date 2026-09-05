@@ -4,6 +4,19 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-06 — Light professional theme (Console)
+
+### Changed
+- **Full light-theme reskin of the Console** per user feedback ("less darker"): white cards on a soft gray window (`#F2F3F6`), dark slate text, same accent blue. The two-column no-scroll layout, all control names, handlers, and behaviors are unchanged — a reskin, not a restructure.
+- **Contrast re-verified for light backgrounds** (WCAG ≥4.5:1 text): primary `#1B1E26` on white 15.5:1; secondary `#5C6270` on white 6.1:1; white on accent `#2563EB` 5.2:1; state text `#1D5CC0` on `#E3EDFC` 5.3:1 and `#8A6300` on `#FCF3D9` 4.9:1; section labels `#676D79` on window 4.6:1.
+- **State colors restated for light backgrounds**: running/connected = blue `#1D5CC0` on light-blue `#E3EDFC` with `#B9CDF0` border; stopped/warning = dark amber `#8A6300` on `#FCF3D9` with `#E3D49E` border. Shape coding (filled square / hollow circle) and the blue/yellow axis are preserved.
+- **Soft shadows tuned for light UI**: neutral blue-gray (`#33415C` at 14% opacity, downward) on cards; blue-tinted glow on the hero card; QR plate keeps white with a visible border.
+- **Header**: white bar, blue gradient icon tile showing the app icon image (loaded via the existing code-behind icon path — deliberately *not* a XAML pack-URI, see the 2026-09-03 crash note), status pill, Open Viewer / Refresh.
+- **Log pane** flipped to light: `#F7F8FA` background, dark slate text.
+- *Verified:* clean build; self-screenshot shows the full light theme rendering (header chip "Running · PID", hero with red Turn-off DangerButton, endpoint combo with friendly Wi-Fi label, QR, tabs).
+
+---
+
 ## 2026-09-05 — Autonomous improvement batch (robustness, auth, keyboard, autostart)
 
 Ran while the user was away; every item is a previously identified improvement, implemented and verified locally. iPad HEVC validation is still the outstanding on-device test (service instrumented and ready — see the 2026-09-05 entry below).

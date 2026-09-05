@@ -31,10 +31,13 @@ public partial class MainWindow : Window
             var appIcon = LoadAppIcon();
             if (appIcon != null)
             {
-                Icon = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                var iconSource = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
                     appIcon.Handle,
                     Int32Rect.Empty,
                     BitmapSizeOptions.FromEmptyOptions());
+                iconSource.Freeze();
+                Icon = iconSource;
+                HeaderIconImage.Source = iconSource; // branded header tile (light theme)
             }
         }
         catch { }
