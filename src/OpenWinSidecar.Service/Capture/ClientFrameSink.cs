@@ -52,6 +52,7 @@ public sealed class ClientFrameSink : IDisposable
 
     private int _busy;
     private readonly SemaphoreSlim _frameSignal = new(0, 1);
+    private int _composeWitnessed; // set on every compose; consumed by the send-finally re-arm
     private int _composeLogged;
     private int _sendLogged;
     private volatile bool _hevcRestartRequested;
@@ -210,11 +211,12 @@ public sealed class ClientFrameSink : IDisposable
             if (Interlocked.Exchange(ref _composeLogged, 1) == 0)
                 Console.WriteLine($"[Sink] First frame composed {dstW}x{dstH} for {DeviceName}");
 
-            // Signal the consumer only if it is not already pending (coalesces ticks)
-            if (_frameSignal.CurrentCount == 0)
-            {
-                try { _frameSignal.Release(); } catch (SemaphoreFullException) { }
-            }
+            // Signal exactly once per compose. The semaphore capacity is 1, so at most one
+            // wakeup is pending; if the consumer is mid-send it will find this compose (or
+            // a newer one) via _composeWitnessed and re-arm after finishing — no lost
+            // frames and no stale-signal double-consumption.
+            Interlocked.Exchange(ref _composeWitnessed, 1);
+            try { _frameSignal.Release(); } catch (SemaphoreFullException) { }
 
             return true;
         }
@@ -256,6 +258,14 @@ public sealed class ClientFrameSink : IDisposable
         }
         finally
         {
+            // Re-arm the handoff BEFORE clearing busy, but only when a compose arrived
+            // during this send (otherwise an idle desktop would busy-loop the consumer).
+            // Ordering matters: any compose between these two lines sees busy=0, runs,
+            // and releases its own signal — no lost wakeups, no every-other-frame drop.
+            if (Interlocked.Exchange(ref _composeWitnessed, 0) == 1)
+            {
+                _frameSignal.Release();
+            }
             Interlocked.Exchange(ref _busy, 0);
 
             _statFrames++;

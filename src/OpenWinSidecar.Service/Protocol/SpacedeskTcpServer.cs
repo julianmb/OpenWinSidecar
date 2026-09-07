@@ -222,19 +222,12 @@ public class SpacedeskTcpServer : IDisposable
         _hub.EnsureProducer(sink.DeviceName);
         Console.WriteLine($"[WebSocket] Streaming {initialScreen.DeviceName} ({initialScreen.Bounds.Width}x{initialScreen.Bounds.Height})");
 
-        _ = Task.Run(async () =>
+        // The full input-message chain, extracted so both the auth gate and the stream
+        // loop can route complete messages through it (each coalesced frame handled once).
+        void HandleClientMessage(string text)
         {
-            var wsBuffer = new byte[4096];
-            while (!token.IsCancellationRequested && client.Connected)
+            if (string.IsNullOrEmpty(text)) return;
             {
-                try
-                {
-                    int bytesRead = await stream.ReadAsync(wsBuffer, token);
-                    if (bytesRead <= 0) break;
-
-                    var text = ParseWsTextMessage(wsBuffer, bytesRead);
-                    if (!string.IsNullOrEmpty(text))
-                    {
                         if (text.StartsWith("codec:"))
                         {
                             var cStr = text.Substring(6).ToLowerInvariant();
@@ -355,10 +348,27 @@ public class SpacedeskTcpServer : IDisposable
                         else if (text.StartsWith("rightclick"))
                         {
                             _inputDispatcher.MouseClick(false, true);
-                            await Task.Delay(30, token);
                             _inputDispatcher.MouseClick(false, false);
                         }
-                    }
+            }
+        }
+
+        _ = Task.Run(async () =>
+        {
+            // Browsers coalesce several WebSocket frames into one TCP segment (Safari does
+            // this on the connect burst), and reads can split frames — the assembler yields
+            // every complete text message in order. The old one-parse-per-read loop dropped
+            // all messages after the first, which is how 'codec:hevc' was being lost.
+            var wsBuffer = new byte[4096];
+            var assembler = new WsTextMessageAssembler();
+            while (!token.IsCancellationRequested && client.Connected)
+            {
+                try
+                {
+                    int bytesRead = await stream.ReadAsync(wsBuffer, token);
+                    if (bytesRead <= 0) break;
+
+                    assembler.OnData(wsBuffer, bytesRead, HandleClientMessage);
                 }
                 catch { break; }
             }
@@ -444,6 +454,7 @@ public class SpacedeskTcpServer : IDisposable
         try
         {
             var buf = new byte[4096];
+            var assembler = new WsTextMessageAssembler(); // Safari coalesces frames in one read
             for (int attempt = 1; attempt <= 3; attempt++)
             {
                 string challenge = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
@@ -455,9 +466,11 @@ public class SpacedeskTcpServer : IDisposable
                     int n = await stream.ReadAsync(buf, timeoutCts.Token);
                     if (n <= 0) return false;
 
-                    var msg = ParseWsTextMessage(buf, n);
-                    if (!string.IsNullOrEmpty(msg) && msg.StartsWith("auth:", StringComparison.Ordinal))
-                        presented = msg["auth:".Length..];
+                    assembler.OnData(buf, n, msg =>
+                    {
+                        if (msg.StartsWith("auth:", StringComparison.Ordinal))
+                            presented = msg["auth:".Length..];
+                    });
                 }
 
                 // Preferred: SHA-256(password + challenge) hex. Fallback: plaintext password
@@ -488,29 +501,84 @@ public class SpacedeskTcpServer : IDisposable
         return false;
     }
 
-    private static string? ParseWsTextMessage(byte[] buffer, int length)
+    /// <summary>
+    /// A buffering WebSocket text-message parser. Browsers legitimately coalesce several
+    /// WebSocket frames into one TCP segment (Safari does this on the connect burst), and
+    /// reads may also split a frame across segments — the old one-parse-per-read loop
+    /// dropped every coalesced message after the first, losing 'codec:hevc' and friends.
+    /// Feed every read; complete text messages come out in order.
+    /// </summary>
+    private sealed class WsTextMessageAssembler
     {
-        if (length < 6) return null;
-        bool masked = (buffer[1] & 0x80) != 0;
-        int payloadLen = buffer[1] & 0x7F;
-        int offset = 2;
+        private readonly byte[] _acc = new byte[64 * 1024];
+        private int _accLen;
 
-        if (payloadLen == 126) offset = 4;
-        else if (payloadLen == 127) offset = 10;
-
-        if (!masked) return Encoding.UTF8.GetString(buffer, offset, length - offset);
-
-        var mask = buffer.AsSpan(offset, 4);
-        offset += 4;
-        int dataLen = length - offset;
-        var decoded = new byte[dataLen];
-
-        for (int i = 0; i < dataLen; i++)
+        public void OnData(byte[] data, int length, Action<string> onMessage)
         {
-            decoded[i] = (byte)(buffer[offset + i] ^ mask[i % 4]);
-        }
+            if (_accLen + length > _acc.Length) _accLen = 0; // malformed overflow — reset
 
-        return Encoding.UTF8.GetString(decoded);
+            Buffer.BlockCopy(data, 0, _acc, _accLen, length);
+            _accLen += length;
+
+            // Decode as many complete frames as are buffered
+            int pos = 0;
+            while (true)
+            {
+                if (_accLen - pos < 2) break;
+
+                bool masked = (_acc[pos + 1] & 0x80) != 0;
+                int payloadLen = _acc[pos + 1] & 0x7F;
+                int headerLen = 2;
+
+                if (payloadLen == 126)
+                {
+                    if (_accLen - pos < 4) break;
+                    payloadLen = (_acc[pos + 2] << 8) | _acc[pos + 3];
+                    headerLen = 4;
+                }
+                else if (payloadLen == 127)
+                {
+                    if (_accLen - pos < 10) break;
+                    payloadLen = (int)((long)_acc[pos + 2] << 56 | (long)_acc[pos + 3] << 48 |
+                                       (long)_acc[pos + 4] << 40 | (long)_acc[pos + 5] << 32 |
+                                       (long)_acc[pos + 6] << 24 | (long)_acc[pos + 7] << 16 |
+                                       (long)_acc[pos + 8] << 8  | _acc[pos + 9]);
+                    headerLen = 10;
+                }
+
+                int maskLen = masked ? 4 : 0;
+                int frameEnd = pos + headerLen + maskLen + payloadLen;
+                if (frameEnd > _accLen) break; // partial frame — wait for more data
+
+                bool isText = (_acc[pos] & 0x0F) == 0x1;
+                bool isFinal = (_acc[pos] & 0x80) != 0;
+
+                if (isText && isFinal && payloadLen > 0)
+                {
+                    var decoded = new byte[payloadLen];
+                    int dataStart = pos + headerLen + maskLen;
+                    if (masked)
+                    {
+                        for (int i = 0; i < payloadLen; i++)
+                            decoded[i] = (byte)(_acc[dataStart + i] ^ _acc[pos + headerLen + (i & 3)]);
+                    }
+                    else
+                    {
+                        Buffer.BlockCopy(_acc, dataStart, decoded, 0, payloadLen);
+                    }
+                    onMessage(Encoding.UTF8.GetString(decoded));
+                }
+
+                pos = frameEnd;
+            }
+
+            // Keep any trailing partial frame for the next read
+            if (pos > 0)
+            {
+                Buffer.BlockCopy(_acc, pos, _acc, 0, _accLen - pos);
+                _accLen -= pos;
+            }
+        }
     }
 
     private static async Task ServeHtmlViewerPageAsync(NetworkStream stream, CancellationToken token)

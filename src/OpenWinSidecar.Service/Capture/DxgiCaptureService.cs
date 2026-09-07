@@ -438,8 +438,14 @@ public sealed class DxgiCaptureService : IDisposable
         }
         catch (SharpGen.Runtime.SharpGenException ex) when (ex.HResult == unchecked((int)0x887A0026) || ex.HResult == unchecked((int)0x887A0001))
         {
-            // DXGI_ERROR_ACCESS_LOST / DXGI_ERROR_INVALID_CALL — mode change or UAC prompt
+            // DXGI_ERROR_ACCESS_LOST / DXGI_ERROR_INVALID_CALL — mode change or UAC prompt.
+            // Drop the stale bitmap too: the producer's GDI seed only re-arms when
+            // Bitmap == null, and a stale pre-mode-change bitmap would block re-seeding
+            // (the frozen-after-mode-change bug).
             ReleaseDuplication();
+            frame.Bitmap = null!;
+            frame.Width = 0;
+            frame.Height = 0;
             return false;
         }
         catch
