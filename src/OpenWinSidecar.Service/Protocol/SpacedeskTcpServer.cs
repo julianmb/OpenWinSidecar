@@ -970,29 +970,37 @@ public class SpacedeskTcpServer : IDisposable
         let hevcSupported = false;
 
         // Probe WebCodecs once per device: ask the browser whether it can hardware-decode
-        // this stream before choosing the codec, instead of trying HEVC and falling back
-        // after a failed first frame (which stalled non-Apple browsers for a second+).
-        async function detectHevcSupport() {{
+        // HEVC. Fail-safe by design: never throws, never hangs (2s timeout), and answers
+        // false on any doubt — the stream starts on JPEG and upgrades only on a clear yes.
+        async function detectHevcSupportSafe() {{
             if (hevcSupportKnown) return hevcSupported;
             if (!window.VideoDecoder || !VideoDecoder.isConfigSupported) {{
                 hevcSupportKnown = true;
-                hevcSupported = false; // no WebCodecs at all -> JPEG
+                hevcSupported = false;
                 return false;
             }}
             try {{
-                const support = await VideoDecoder.isConfigSupported({{
+                // optimizeForLatency omitted: some WebKit builds reject the probe with it,
+                // and its absence doesn't change the capability answer meaningfully.
+                const probe = VideoDecoder.isConfigSupported({{
                     codec: 'hvc1.1.6.L93.B0',
-                    hardwareAcceleration: 'prefer-hardware',
-                    optimizeForLatency: true
+                    hardwareAcceleration: 'prefer-hardware'
                 }});
+                const support = await Promise.race([
+                    probe,
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 2000))
+                ]);
                 hevcSupported = !!(support && support.supported);
             }} catch (e) {{
-                hevcSupported = false;
+                hevcSupported = false; // timeout/throw -> treat as unsupported, stream JPEG
             }}
             hevcSupportKnown = true;
             console.log('[WebCodecs] HEVC hardware decode ' + (hevcSupported ? 'available' : 'NOT available') + ' on this device');
             return hevcSupported;
         }}
+
+        // Kept for compatibility with earlier call sites
+        async function detectHevcSupport() {{ return detectHevcSupportSafe(); }}
 
         // Default codec per device capability; called after the socket opens
         async function pickDefaultCodec() {{
@@ -1228,11 +1236,10 @@ public class SpacedeskTcpServer : IDisposable
             return H.map(x => ('00000000' + ((x >>> 0).toString(16))).slice(-8)).join('');
         }}
 
-        async function syncSessionSettings() {{
+        function syncSessionSettings() {{
             syncResolutionNow();
-            let c = (codecSelect ? codecSelect.value : 'hevc');
-            if (c === 'hevc' && hevcSupportKnown && !hevcSupported) c = 'intra';
-            changeCodec(c);
+            const c = (codecSelect ? codecSelect.value : 'hevc');
+            changeCodec(c); // explicit codec message every (re)connect — server always starts on a known path
             const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.5';
             changeZoom(z);
             const sel = document.getElementById('display-select').value;
@@ -1291,20 +1298,26 @@ public class SpacedeskTcpServer : IDisposable
                 requestWakeLock();
                 syncResolutionNow();
 
-                // Probe hardware HEVC support once and use it as the default codec for
-                // this device (no fallback stall on devices that can't decode HEVC)
-                let c = (codecSelect ? codecSelect.value : 'hevc');
-                if (c === 'hevc' && !(await detectHevcSupport())) {{
-                    c = 'intra';
-                    if (codecSelect) codecSelect.value = 'intra';
-                }}
-                changeCodec(c);
-
+                // ALWAYS send an explicit codec choice so the server starts streaming on a
+                // known path. The probe refines it when it resolves (fail-safe: a hung or
+                // throwing isConfigSupported on some Safari versions can never stall the
+                // stream — JPEG flows immediately, HEVC upgrades it when confirmed).
                 const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.5';
                 changeZoom(z);
 
                 const sel = document.getElementById('display-select').value;
                 ws.send('display:' + sel);
+
+                let c = (codecSelect ? codecSelect.value : 'hevc');
+                changeCodec(c); // start streaming NOW with the current selection (default: hevc -> server encodes; probe may switch to intra)
+
+                if (c === 'hevc') {{
+                    const canHevc = await detectHevcSupportSafe();
+                    if (!canHevc) {{
+                        codecSelect.value = 'intra';
+                        changeCodec('intra');
+                    }}
+                }}
             }};
 
             ws.onmessage = async (e) => {{
