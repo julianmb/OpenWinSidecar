@@ -1178,7 +1178,16 @@ public class SpacedeskTcpServer : IDisposable
             targetW = Math.floor(targetW / 2) * 2;
             targetH = Math.floor(targetH / 2) * 2;
 
-            return {{ width: targetW, height: targetH, dpr: dpr, physicalW: Math.round(targetW * dpr), physicalH: Math.round(targetH * dpr) }};
+            // Stream at the device's PHYSICAL pixel size when it's a Retina-class screen
+            // (dpr >= 2) — a native 2360x1640 stream means compose is a 1:1 copy instead
+            // of a per-frame bilinear downscale (10-14ms -> <1ms), and HEVC carries the
+            // extra pixels easily. Non-Retina devices keep the CSS-point size.
+            if (dpr >= 2) {{
+                targetW = Math.round(targetW * dpr);
+                targetH = Math.round(targetH * dpr);
+            }}
+
+            return {{ width: targetW, height: targetH, dpr: dpr, physicalW: targetW, physicalH: targetH }};
         }}
 
         function getOptimalResolution() {{
