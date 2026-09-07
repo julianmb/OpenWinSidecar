@@ -1,236 +1,128 @@
-# 🚀 OpenWinSidecar (.NET 10 LTS)
+# OpenWinSidecar
 
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![.NET 10 LTS](https://img.shields.io/badge/.NET-10.0%20LTS-purple.svg)](https://dotnet.microsoft.com/)
-[![Direct3D 11](https://img.shields.io/badge/Capture-Direct3D%2011%20DXGI-green.svg)]()
-[![Hardware Codec](https://img.shields.io/badge/Encoder-Intel%20Arc%20HEVC-orange.svg)]()
-[![Platform](https://img.shields.io/badge/Platform-Windows%2011%20%7C%20iPadOS%20%7C%20Android-blue.svg)]()
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
+[![Capture](https://img.shields.io/badge/Capture-Direct3D%2011%20DXGI-green.svg)]()
+[![Codec](https://img.shields.io/badge/Encoder-Intel%20QSV%20HEVC-orange.svg)]()
+[![Client](https://img.shields.io/badge/Client-iPadOS%20Safari%20%7C%20any%20browser-blue.svg)]()
 
-**Open-source, ultra-low latency, hardware-accelerated Windows virtual monitor server, dashboard, and WebCodecs streamer.**  
-Turn your **iPad**, tablet, or laptop into a fluid **60 FPS second or third monitor** with native touch, gestures, zero-duplicate cursors, and live Windows display scaling.
+**An open-source Windows virtual display that streams to your iPad's browser — no client app, no subscription.**
 
-[Core Features](#-core-features) • [Smart 3rd Screen Workflow](#-smart-3rd-screen-lifecycle) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [iPad Setup](#-ipad-safari-setup) • [CLI Commands](#-cli-management) • [Documentation](#-documentation)
+Turn an iPad (or any device with a browser) into a real extra Windows monitor: true "Extend display" via a virtual display driver, hardware H.265 streaming, full touch and keyboard input — straight from Safari.
+
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Why this exists](#why-this-exists) · [Features](#features) · [Architecture](docs/architecture.md) · [Troubleshooting](docs/troubleshooting-and-faq.md)
 
 </div>
 
 ---
 
-## 🌟 Why OpenWinSidecar?
+## Why this exists
 
-Proprietary solutions like spacedesk or Duet often suffer from CPU overhead, compression artifacts, laggy touch responsiveness, or paid subscription barriers. **OpenWinSidecar** delivers an Apple Sidecar-like experience for Windows PCs:
+Apple's Sidecar is a beautiful thing — a Mac turns an iPad into a wireless second monitor with almost no setup. Windows has nothing like it built in. The commercial alternatives are closed-source, subscription-priced, CPU-hungry, or all three.
 
-- ⚡ **Imperceptible Latency (~7–10 ms glass-to-glass)**
-- 🎮 **Direct GPU VRAM Capture (< 0.5 ms via Direct3D 11 Desktop Duplication)**
-- 🚀 **Intel Arc GPU Hardware HEVC (H.265) Encoding (~3.5 ms)**
-- 📱 **Zero-Client Install**: Runs straight in Safari using Apple Silicon hardware **WebCodecs** decoding.
-- 🔄 **Smart 3rd Screen Power Lifecycle**: Turn on 3rd screen to auto-stream; turn off to cleanly detach the virtual display and stop streaming.
-- 🖱️ **Zero-Duplicate Cursor**: Hardware-accurate mouse pointer rendering with zero overlapping client pointers.
-- 🖥️ **Live Windows Display DPI Scaling (100%–225%)** directly from the web client.
-- 📐 **True Aspect-Ratio Preservation**: Never stretches or squishes your display.
+OpenWinSidecar is the open answer, built on a simple idea: **an iPad already has a great hardware video decoder and a great screen — Safari just needs the right bytes.** So the project streams a *real Windows virtual display* (a genuine extend-mode monitor, not a mirror) to Safari using hardware HEVC and WebCodecs, with input injection back into Windows. No App Store download, no per-feature subscription, no opaque binaries.
 
----
+| | OpenWinSidecar | Sidecar | Commercial Windows tools |
+|---|---|---|---|
+| Extra monitor (extend, not mirror) | ✅ | ✅ | ✅ |
+| Client install | **None — Safari** | iPad built-in | App + account |
+| Hardware H.265 end-to-end | ✅ Intel QSV → Apple silicon | ✅ | varies |
+| Open source / self-hosted | ✅ MIT | ❌ | ❌ |
+| Touch → Windows input | ✅ | ✅ (Mac only) | ✅ |
+| Cost | free | needs a Mac | subscription |
 
-## 📊 Glass-to-Glass Latency Budget
+## Quick start
 
-```
-Direct3D 11 GPU VRAM Capture :  < 0.5 ms
-Intel Arc A380 HEVC Encode   :  ~ 3.5 ms
-TCP_NODELAY Wi-Fi Transport  :  ~ 1.5 ms
-Apple Silicon Hardware Decode:  ~ 1.5 ms
-desynchronized Framebuffer   :  < 0.5 ms
-----------------------------------------
-Total Glass-to-Glass Latency :  ⚡ ~7 – 10 ms (Imperceptible)
-```
+**Requirements:** Windows 10/11 with an Intel GPU with Quick Sync (Arc / Iris Xe / integrated), .NET 10 SDK, and any device with a modern browser on the same network.
 
----
-
-## 🏗️ System Architecture
-
-```mermaid
-flowchart LR
-    subgraph Host["Host PC (Windows 11)"]
-        VDD["IddCx Driver\n(ROOT\\DISPLAY\\0000)"] --> D3D11["Direct3D 11 VRAM\n(IDXGIOutputDuplication)"]
-        D3D11 --> QSV["Intel Arc GPU\n(hevc_qsv ~3.5ms)"]
-        CCD["Win32 CCD DPI API\n(WindowsDpiService)"] -.-> VDD
-        RES["Win32 Display Switcher\n(DisplayResolutionManager)"] -.-> VDD
-        QSV --> TCP["Multi-Port Server\n(Ports 80, 8080, 28252)"]
-        INP["Win32 SendInput\n(InputDispatcher)"] <-- TCP
-    end
-
-    subgraph iPad["Client iPad (Safari / PWA)"]
-        TCP ==> WS["WebSocket Client\n(Binary WebCodecs)"]
-        WS --> DEC["Apple Silicon Hardware\n(VideoDecoder ~1.5ms)"]
-        DEC --> CV["Canvas Framebuffer\n(desynchronized: true)"]
-        TOUCH["Touch & Gestures\n(rAF Batched)"] --> WS
-    end
-```
-
----
-
-## 🔄 Smart 3rd Screen Lifecycle
-
-OpenWinSidecar provides an intuitive 1-click power switch for your virtual display:
-
-1. **⚡ Turn ON 3rd Screen (`⚡ 3rd Screen ON`)**:
-   - Enables the signed Virtual Display Driver (`ROOT\DISPLAY\0000` via `pnputil` / `devcon`).
-   - Automatically extends Windows desktop onto the 3rd iPad monitor.
-   - Starts the streaming service.
-   - Live badge turns **`[🟢 3RD SCREEN ACTIVE & STREAMING]`**.
-
-2. **🔌 Turn OFF 3rd Screen (`🔌 3rd Screen OFF`)**:
-   - Stops the streaming service.
-   - Disables the Virtual Display Driver, cleanly detaching the monitor so Windows never loses your mouse cursor or app windows off-screen.
-   - Live badge turns **`[⚫ 3RD SCREEN DISABLED / OFFLINE]`**.
-
-3. **🛑 Complete Shutdown (Service + Driver)**:
-   - 1-click complete shutdown of the streaming service, cleanup of background processes, and disabling of the display driver.
-
----
-
-## 🚀 Core Features
-
-### ⚡ Direct3D 11 GPU VRAM Capture (`DxgiCaptureService`)
-- Acquires desktop frames directly from GPU VRAM via `IDXGIOutputDuplication` in **< 0.5 ms**.
-- Pinned SIMD native memory buffers bypass GDI CPU overhead.
-- Automatic graceful fallback to GDI `CreateDC` if DXGI access is revoked during secure desktop prompts.
-
-### 🎬 Intel Arc QuickSync HEVC (H.265) Encoding
-- Encodes 60 FPS video via Intel QuickSync (`hevc_qsv`) in **~3.5 ms**.
-- Dynamic bitrate scaling presets:
-  - **50% Quality (3 Mbps)** — Congested Wi-Fi networks
-  - **65% Quality (5 Mbps)** — Standard Wi-Fi
-  - **80% Quality (8 Mbps - Default)** — Crisp text & 60 FPS motion
-  - **90% Quality (12 Mbps)** — Ultra-sharp design/retina detail
-
-### 🖱️ Zero-Duplicate Cursor & Pointer Modes
-- Eliminates overlapping dual mouse pointers by suppressing browser-side cursors (`cursor: none !important`) and streaming a single, hardware-accurate Windows host cursor with sub-pixel hotspot correction.
-- Choose between **Streamed Host Cursor (Default)**, **Touch Tablet Mode (Hide Cursor)**, or **Browser Native Cursor**.
-
-### 📱 Native WebCodecs Decoding on iPadOS
-- Decoded directly on Apple Silicon dedicated media engines using W3C `VideoDecoder` (`optimizeForLatency: true`).
-- Rendered to HTML5 Canvas with `{ desynchronized: true }`, bypassing Safari's compositor queue and saving 1 full frame (~16.6ms) of latency.
-
-### 🖥️ Dynamic Win32 CCD DPI Scaling & Resolution Switcher
-- Change Windows Display Scale (**100% to 225%**) directly from the web client or WPF console.
-- Apply curated iPad resolution presets (Air, Pro 11"/13", 12.9", 10.2", mini), custom $W \times H @ \text{Hz}$, or driver-supported modes in real-time via `DisplayResolutionManager`.
-
-### ✍️ Smooth Touch, Gestures & Keyboard
-- Single-finger touch and mouse drag with `requestAnimationFrame` event batching for zero input jitter.
-- Two-finger scrolling (`MOUSEEVENTF_WHEEL`) and two-finger tap (Right Click).
-- Hardware keyboard forwarding and mobile virtual keyboard support.
-
----
-
-## 🏃 Quick Start
-
-### 1. Prerequisites
-- Windows 10 (1607+) or Windows 11
-- [.NET 10 LTS SDK](https://dotnet.microsoft.com/download)
-- FFmpeg on PATH (or via WinGet: `winget install Gyan.FFmpeg`)
-
-### 2. Clone and Build
 ```powershell
-git clone https://github.com/YourUsername/OpenWinSidecar.git
+git clone <this repo>
 cd OpenWinSidecar
 dotnet build OpenWinSidecar.slnx
-```
 
-### 3. Launch Dashboard & Service
-```powershell
-# Run the WPF Management Console (with tray icon & resolution manager)
+# 1. Install the virtual display driver (once; admin)
+#    drivers/VDD/install_driver.bat
+
+# 2. Start the console (installs the tray app, manages everything)
 dotnet run --project src/OpenWinSidecar.Console
-
-# Or run the service directly with Administrator privileges (recommended for DXGI capture)
-.\run_service_admin.bat
 ```
 
----
+Then on the iPad: **scan the QR code** shown in the console (or open `http://<your-pc-ip>:8080` in Safari) → Share → **Add to Home Screen** for a borderless fullscreen experience. Windows now has an extra display in Settings, and the iPad shows it — move windows onto it like any monitor.
 
-## 📱 iPad Safari Setup
+> **First-run note:** the streaming service must run elevated for GPU capture (`run_service_admin.bat`), and the firewall may prompt on first launch.
 
-1. Connect your iPad to the same Wi-Fi network (or connect via USB cable).
-2. Open Safari and navigate to:
-   ```
-   http://<YOUR_PC_IP>:8080
-   ```
-   *(e.g., `http://192.168.1.12:8080` or `http://192.168.1.12:28252`)*
-3. **For Borderless Fullscreen App Experience:**
-   - Tap **Share (⬆️)** in Safari.
-   - Select **Add to Home Screen**.
-   - Launch **OpenWinSidecar** from your home screen as a standalone, distraction-free app.
+## How it works
 
----
-
-## ⚙️ Web Settings Reference
-
-Tap the top pill button (`🟢 60 FPS • HEVC GPU • ⚙️`) in the web viewer to adjust:
-
-- **Target Display:** Select Primary, Secondary, or Virtual 3rd Display.
-- **Video Codec:** `🚀 HEVC / H.265 (Intel Arc GPU Accelerated)` or `🖼️ Intra JPEG`.
-- **Screen Resolution:** `✨ Auto-Detect My Device Screen` or choose your specific iPad model.
-- **Windows Display Scale:** `100%`, `125%`, `150%`, `175% (Recommended for iPad)`, `200%`, `225%`.
-- **Mouse Cursor Mode:** `🖥️ Host Windows Cursor (Default)`, `📱 Touch Tablet (Hide Cursor)`, `💻 Browser Native Cursor`.
-- **UI Magnification:** `1.0x` (Full Desktop) up to `2.0x` (Large Touch Targets).
-- **Quality Preset:** `50% (Fastest)` to `90% (Ultra Crisp)`.
-
----
-
-## 🛠️ CLI Management
-
-OpenWinSidecar includes a full CLI tool for automation and headless environments:
-
-```powershell
-# Smart 3rd Screen Power Switch
-dotnet run --project src/OpenWinSidecar.Cli -- screen on      # Enable driver, extend desktop & start streaming
-dotnet run --project src/OpenWinSidecar.Cli -- screen off     # Stop streaming & disable virtual display driver
-dotnet run --project src/OpenWinSidecar.Cli -- shutdown       # Complete shutdown (service + driver)
-
-# Service Lifecycle
-dotnet run --project src/OpenWinSidecar.Cli -- status         # Show service, driver, and network status
-dotnet run --project src/OpenWinSidecar.Cli -- start          # Start streaming service
-dotnet run --project src/OpenWinSidecar.Cli -- stop           # Stop streaming service
-dotnet run --project src/OpenWinSidecar.Cli -- restart        # Restart streaming service
-dotnet run --project src/OpenWinSidecar.Cli -- driver restart # Restart display driver and re-extend
-
-# Inspection & Configuration
-dotnet run --project src/OpenWinSidecar.Cli -- clients        # List connected client displays
-dotnet run --project src/OpenWinSidecar.Cli -- network        # List active network adapters & endpoints
-dotnet run --project src/OpenWinSidecar.Cli -- config         # View/edit configuration settings
+```mermaid
+graph LR
+    subgraph Windows["Windows PC"]
+        VDD["Virtual display driver<br/>(IddCx / MttVDD)"] -->|DWM composes a real monitor| DXGI["Desktop Duplication<br/>Direct3D 11"]
+        DXGI -->|GPU frames| QSV["Intel QSV HEVC<br/>(ffmpeg hevc_qsv)"]
+        QSV -->|hvcC + length-prefixed AUs| WS["WebSocket server<br/>:80 / :8080 / :28252"]
+        WS --> INJ["SendInput injection<br/>(touch, keyboard, gestures)"]
+    end
+    subgraph iPad["iPad — Safari, no install"]
+        WS -->|WebCodecs VideoDecoder<br/>hardware HEVC| CANVAS["Canvas"]
+        TOUCH["Touch / Apple Pencil events"] -->|WebSocket text| INJ
+    end
 ```
 
----
+Three pieces make it interesting:
 
-## 📦 Project Structure
+1. **A *real* virtual monitor.** The driver (IddCx) presents an actual display to Windows — apps see a genuine monitor with its own resolution and DPI, windows can be maximized onto it, and the desktop *aspect-matches the iPad* automatically so the stream fills the screen with no black bars.
+2. **Hardware end-to-end.** Frames never touch the CPU on the capture path (Direct3D 11 Desktop Duplication straight from GPU VRAM), and encoding runs on the Intel GPU's dedicated QSV block — a 2560×1440 desktop encodes in single-digit milliseconds. On the iPad, Safari's WebCodecs decoder hands frames to the same silicon Apple uses for video playback.
+3. **A protocol small enough to read in an afternoon.** WebSocket binary packets with a 15-byte header; access authentication with SHA-256 challenge-response; per-client encoders so clients always join on a clean keyframe; idle frames skipped entirely (a static desktop costs ~0 bandwidth). The whole wire format fits in [one documented page](docs/network-and-discovery.md).
+
+## Features
+
+- **Extend, not mirror** — a genuine additional display with its own resolution; aspect-matched to the connecting device
+- **Hardware HEVC** (H.265) streaming with automatic JPEG fallback — works on any browser, flies on Apple silicon
+- **Full input**: touch tap/drag, two-finger scroll, two-finger tap = right-click, on-screen keyboard, physical-keyboard forwarding (layout-stable `e.code` mapping)
+- **Multi-monitor intelligence**: resolution presets for every iPad generation, Windows DPI scaling (100–225%) adjustable live from the iPad
+- **Fan-out architecture** — one capture loop per display serves any number of clients; slow clients drop frames instead of adding latency
+- **Optional access password** — challenge-response authenticated, off by default
+- **Zero-install client** — Safari (or Chrome/Firefox/Edge), Add to Home Screen for the full-screen PWA
+- **Console app** with QR-code connect, live status, service/driver lifecycle management, and a system tray
+
+## Performance characteristics
+
+Measured on a test system (Intel Arc A380, 2560×1440 virtual display, wired LAN):
+
+| Path | What you get |
+|---|---|
+| Capture (DXGI Desktop Duplication) | < 1 ms per frame, GPU-resident |
+| HEVC encode (QSV) | single-digit ms; ~5 Mbps class bitrate |
+| JPEG fallback | ~55 fps at 1180-wide, universal compatibility |
+| Idle desktop | near-zero bandwidth (unchanged frames are not re-sent) |
+| Multi-client | two iPads ≈ 48 fps each, independent streams |
+
+Latency is dominated by network + display pipeline; on a healthy Wi-Fi network the experience is fluid desktop use. On-device iPad HEVC validation is the current focus — see the [troubleshooting guide](docs/troubleshooting-and-faq.md) if your Safari falls back to JPEG.
+
+## Project layout
 
 ```
-OpenWinSidecar/
-├── OpenWinSidecar.slnx              # Solution file (.NET 10 LTS)
-├── run_service_admin.bat            # Administrator launcher
-├── src/
-│   ├── OpenWinSidecar.Core/         # Win32 CCD API, DisplayResolutionManager, VirtualDisplayManager
-│   ├── OpenWinSidecar.Service/      # DXGI/GDI Capture, HEVC QSV Encoder, Input Dispatcher, HTTP/WS
-│   ├── OpenWinSidecar.Console/      # WPF Management Dashboard & System Tray
-│   └── OpenWinSidecar.Cli/          # CLI Automation Tool
-├── drivers/VDD/                     # Signed IddCx Virtual Display Driver
-└── docs/                            # Comprehensive technical documentation & research
+src/
+  OpenWinSidecar.Core      # display/driver/services management, Win32 interop
+  OpenWinSidecar.Service   # capture, encoding, WebSocket server, web client
+  OpenWinSidecar.Console   # WPF management app + tray + QR connect
+  OpenWinSidecar.Cli       # command-line management
+drivers/VDD/               # virtual display driver package (IddCx)
+docs/                      # architecture, protocols, troubleshooting
 ```
 
----
+## Limitations & status
 
-## 📚 Documentation
+- **Windows-only server** (the driver and capture stack are inherently Win32); clients are anything with a browser
+- Hardware encoding currently targets **Intel Quick Sync** (Arc / Iris Xe / integrated graphics); NVENC/AMF are natural follow-ups
+- Audio streaming, Apple Pencil pressure, and AV1 are on the roadmap, not yet implemented
+- The virtual display driver is MikeTheTech's [Virtual Display Driver](https://github.com/itsmiketyy/VirtualDisplayDriver) — installed separately, licensed per its own terms
 
-- [Subsystem Architecture](docs/architecture.md)
-- [Drivers & Virtual Display Setup](docs/drivers-and-virtual-monitors.md)
-- [Screen Capture & Streaming Guide](docs/screen-capture-and-streaming.md)
-- [Input & Multi-Touch Gestures](docs/input-and-gestures.md)
-- [Network Protocols & USB Tethering](docs/network-and-discovery.md)
-- [GPU Streaming Research & Latency Benchmarks](docs/gpu-streaming-research.md)
-- [Troubleshooting & Diagnostics](docs/troubleshooting-and-faq.md)
+## Contributing
 
----
+See [CONTRIBUTING.md](CONTRIBUTING.md). The codebase is C# / .NET 10 with Win32 interop concentrated in small, documented P/Invoke surfaces — a good place to start is the [architecture guide](docs/architecture.md) and the wire protocol in [network-and-discovery.md](docs/network-and-discovery.md).
 
-## 📄 License
+## License
 
-OpenWinSidecar is licensed under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE). The bundled virtual display driver (MttVDD) retains its own licensing.
