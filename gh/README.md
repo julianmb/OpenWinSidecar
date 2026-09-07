@@ -10,7 +10,7 @@
 
 **An open-source Windows virtual display that streams to your iPad's browser — no client app, no subscription.**
 
-Turn an iPad (or any device with a browser) into a real extra Windows monitor: true "Extend display" via a virtual display driver, hardware H.265 streaming, full touch and keyboard input — straight from Safari.
+Turn an iPad into a real extra Windows monitor: true "Extend display" via a virtual display driver, hardware H.265 streaming, full touch and keyboard input — straight from Safari. Other modern browsers and devices are expected to work (the stack is web-standard), but **only iPad Safari has been tested so far**.
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Why this exists](#why-this-exists) · [Features](#features) · [Architecture](docs/architecture.md) · [Troubleshooting](docs/troubleshooting-and-faq.md)
 
@@ -111,6 +111,21 @@ src/
 drivers/VDD/               # virtual display driver package (IddCx)
 docs/                      # architecture, protocols, troubleshooting
 ```
+
+## Device support
+
+The server is browser-agnostic — anything with a modern browser can connect. **iPad / Safari is the tested target**; the rest is expected to work based on standards support, with the codec chosen automatically per device (hardware HEVC where available, JPEG otherwise).
+
+| Device / browser | Status | Video path |
+|---|---|---|
+| **iPad — Safari** (any recent) | ✅ **Tested** | Hardware HEVC (with JPEG fallback) |
+| **iPhone — Safari** | 🔶 Untested, expected to work | Hardware HEVC |
+| **Mac — Safari** | 🔶 Untested, expected to work | Hardware HEVC |
+| **Android tablet/phone — Chrome** | 🔶 Untested, expected to work | HEVC on modern hardware, else JPEG |
+| **Windows/Linux laptop — Chrome/Edge** | 🔶 Untested, expected to work | HEVC where the GPU supports it, else JPEG |
+| **Firefox (any platform)** | 🔶 Untested | JPEG fallback (no WebCodecs HEVC yet) |
+
+The client probes `VideoDecoder.isConfigSupported` on connect and picks the codec per device — no failed-codec stall. Reports from other devices are very welcome; the goal is to move rows to ✅ as they're confirmed.
 
 ## Limitations & status
 

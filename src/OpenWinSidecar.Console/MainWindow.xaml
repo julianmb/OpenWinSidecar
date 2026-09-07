@@ -319,7 +319,7 @@
                     </Border>
 
                     <!-- Connect Card with QR Code -->
-                    <TextBlock Text="CONNECT TO IPAD" Style="{StaticResource SectionLabel}"/>
+                    <TextBlock Text="CONNECT A DEVICE" Style="{StaticResource SectionLabel}"/>
                     <Border Style="{StaticResource Card}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -346,7 +346,7 @@
                                     <TextBox x:Name="TxtConnectUrl" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="12.5" VerticalAlignment="Center" Padding="8,5" Text="http://…"/>
                                     <Button Grid.Column="1" Content="Copy" Click="BtnCopyUrl_Click" Padding="10,5" Margin="8,0,0,0"/>
                                 </Grid>
-                                <TextBlock Text="Scan QR with iPad camera or open in Safari. For wired 0ms latency, plug in USB cable and enable iPad Personal Hotspot." FontSize="11" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,8"/>
+                                <TextBlock Text="Scan the QR with your device camera or open the URL in any modern browser. For wired 0ms latency on iPad: USB cable + Personal Hotspot." FontSize="11" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,8"/>
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="🌐 Open Web Viewer" Click="BtnOpenBrowser_Click" Padding="10,5" FontSize="11.5"/>
                                 </StackPanel>

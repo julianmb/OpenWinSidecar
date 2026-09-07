@@ -966,6 +966,41 @@ public class SpacedeskTcpServer : IDisposable
         let isRendering = false;
         let videoDecoder = null;
         let hevcReady = false;
+        let hevcSupportKnown = false;
+        let hevcSupported = false;
+
+        // Probe WebCodecs once per device: ask the browser whether it can hardware-decode
+        // this stream before choosing the codec, instead of trying HEVC and falling back
+        // after a failed first frame (which stalled non-Apple browsers for a second+).
+        async function detectHevcSupport() {{
+            if (hevcSupportKnown) return hevcSupported;
+            if (!window.VideoDecoder || !VideoDecoder.isConfigSupported) {{
+                hevcSupportKnown = true;
+                hevcSupported = false; // no WebCodecs at all -> JPEG
+                return false;
+            }}
+            try {{
+                const support = await VideoDecoder.isConfigSupported({{
+                    codec: 'hvc1.1.6.L93.B0',
+                    hardwareAcceleration: 'prefer-hardware',
+                    optimizeForLatency: true
+                }});
+                hevcSupported = !!(support && support.supported);
+            }} catch (e) {{
+                hevcSupported = false;
+            }}
+            hevcSupportKnown = true;
+            console.log('[WebCodecs] HEVC hardware decode ' + (hevcSupported ? 'available' : 'NOT available') + ' on this device');
+            return hevcSupported;
+        }}
+
+        // Default codec per device capability; called after the socket opens
+        async function pickDefaultCodec() {{
+            const canHevc = await detectHevcSupport();
+            const want = canHevc ? 'hevc' : 'intra';
+            if (codecSelect) codecSelect.value = want;
+            return want;
+        }}
 
         function toggleSettingsModal() {{
             const modal = document.getElementById('settings-modal');
@@ -1193,9 +1228,10 @@ public class SpacedeskTcpServer : IDisposable
             return H.map(x => ('00000000' + ((x >>> 0).toString(16))).slice(-8)).join('');
         }}
 
-        function syncSessionSettings() {{
+        async function syncSessionSettings() {{
             syncResolutionNow();
-            const c = (codecSelect ? codecSelect.value : 'hevc');
+            let c = (codecSelect ? codecSelect.value : 'hevc');
+            if (c === 'hevc' && hevcSupportKnown && !hevcSupported) c = 'intra';
             changeCodec(c);
             const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.5';
             changeZoom(z);
@@ -1254,8 +1290,14 @@ public class SpacedeskTcpServer : IDisposable
                 console.log('[OpenWinSidecar] Stream Connected');
                 requestWakeLock();
                 syncResolutionNow();
-                
-                const c = (codecSelect ? codecSelect.value : 'hevc');
+
+                // Probe hardware HEVC support once and use it as the default codec for
+                // this device (no fallback stall on devices that can't decode HEVC)
+                let c = (codecSelect ? codecSelect.value : 'hevc');
+                if (c === 'hevc' && !(await detectHevcSupport())) {{
+                    c = 'intra';
+                    if (codecSelect) codecSelect.value = 'intra';
+                }}
                 changeCodec(c);
 
                 const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.5';
