@@ -351,6 +351,112 @@ public sealed class DxgiCaptureService : IDisposable
     }
 
     private byte[]? _reusableBgraBuffer;
+    private Bitmap? _nativeBitmap;
+
+    /// <summary>
+    /// Captures the display at its native duplication resolution into a reusable Bitmap for
+    /// the broadcast producer. The cursor is never composited — its screen-space position and
+    /// handle are returned so each subscriber can stamp its own cursor state.
+    /// AcquireNextFrame uses a 0ms timeout: on DXGI_ERROR_WAIT_TIMEOUT the previous bitmap
+    /// content is kept (frame.Captured = false) and only cursor info is refreshed.
+    /// Returns false only on hard failure (duplication unavailable / access lost).
+    /// </summary>
+    public bool CaptureNativeFrame(string deviceName, NativeFrame frame)
+    {
+        if (!_dpiSet) { SetProcessDPIAware(); _dpiSet = true; }
+
+        if (_currentDeviceName != deviceName && !InitializeDuplication(deviceName))
+            return false;
+
+        if (_duplication == null || _device == null || _context == null || _stagingTexture == null)
+            return false;
+
+        CursorInterop.FillFrameCursor(frame);
+        frame.Captured = false;
+
+        IDXGIResource? desktopResource = null;
+        try
+        {
+            var acquireResult = _duplication.AcquireNextFrame(0, out _, out desktopResource);
+            if (acquireResult.Failure || desktopResource == null)
+                return true; // no new desktop update — reuse previous bitmap content.
+                             // (A static desktop never presents at all; the producer seeds
+                             //  the first frame via GDI in that case.)
+
+            using var desktopTexture = desktopResource.QueryInterface<ID3D11Texture2D>();
+            desktopResource.Dispose();
+            desktopResource = null;
+
+            _context.CopyResource(_stagingTexture, desktopTexture);
+            _duplication.ReleaseFrame();
+
+            var mapped = _context.Map(_stagingTexture, 0, MapMode.Read);
+            try
+            {
+                int width = _captureWidth;
+                int height = _captureHeight;
+
+                if (_nativeBitmap == null || _nativeBitmap.Width != width || _nativeBitmap.Height != height)
+                {
+                    _nativeBitmap?.Dispose();
+                    _nativeBitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                }
+
+                var bmpData = _nativeBitmap.LockBits(
+                    new Rectangle(0, 0, width, height),
+                    ImageLockMode.WriteOnly,
+                    PixelFormat.Format32bppArgb);
+
+                unsafe
+                {
+                    byte* srcPtr = (byte*)mapped.DataPointer;
+                    byte* dstPtr = (byte*)bmpData.Scan0;
+                    int copyBytes = Math.Min(bmpData.Stride, (int)mapped.RowPitch);
+
+                    for (int y = 0; y < height; y++)
+                    {
+                        Buffer.MemoryCopy(
+                            srcPtr + y * (long)mapped.RowPitch,
+                            dstPtr + y * (long)bmpData.Stride,
+                            bmpData.Stride,
+                            copyBytes);
+                    }
+                }
+
+                _nativeBitmap.UnlockBits(bmpData);
+
+                frame.Bitmap = _nativeBitmap;
+                frame.Width = width;
+                frame.Height = height;
+                frame.Captured = true;
+                return true;
+            }
+            finally
+            {
+                _context.Unmap(_stagingTexture, 0);
+            }
+        }
+        catch (SharpGen.Runtime.SharpGenException ex) when (ex.HResult == unchecked((int)0x887A0026) || ex.HResult == unchecked((int)0x887A0001))
+        {
+            // DXGI_ERROR_ACCESS_LOST / DXGI_ERROR_INVALID_CALL — mode change or UAC prompt.
+            // Drop the stale bitmap too: the producer's GDI seed only re-arms when
+            // Bitmap == null, and a stale pre-mode-change bitmap would block re-seeding
+            // (the frozen-after-mode-change bug).
+            ReleaseDuplication();
+            frame.Bitmap = null!;
+            frame.Width = 0;
+            frame.Height = 0;
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            desktopResource?.Dispose();
+        }
+    }
 
     /// <summary>
     /// Fast Direct3D11 / DXGI Desktop Duplication capture of raw BGRA bytes for hardware HEVC encoder.

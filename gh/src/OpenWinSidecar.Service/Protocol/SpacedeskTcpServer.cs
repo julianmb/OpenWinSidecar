@@ -22,9 +22,11 @@ public enum StreamCodec
 
 public class SpacedeskTcpServer : IDisposable
 {
+    private static bool _topologyEnsured; // Extend topology is flashed once per process, not per session
+
     private readonly int _port;
-    private readonly DxgiCaptureService _dxgiCapture = new();
-    private readonly ScreenCaptureService _gdiCapture = new();
+    private readonly FrameBroadcastHub _hub = new();
+    private readonly ScreenCaptureService _legacyGdiCapture = new(); // legacy SDFR binary clients only
     private readonly InputDispatcher _inputDispatcher = new();
     private readonly int[] _ports;
     private readonly List<TcpListener> _listeners = new();
@@ -106,6 +108,15 @@ public class SpacedeskTcpServer : IDisposable
                 }
                 else if (path.StartsWith("/input"))
                 {
+                    // Input injection over plain HTTP must present the access password too
+                    var authToken = GetRequiredAuthToken();
+                    if (authToken != null && !HttpQueryMatchesToken(path, authToken))
+                    {
+                        var forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                        await stream.WriteAsync(Encoding.UTF8.GetBytes(forbidden), token);
+                        return;
+                    }
+
                     HandleHttpInput(path);
                     var okResp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 2\r\n\r\nOK";
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(okResp), token);
@@ -118,6 +129,11 @@ public class SpacedeskTcpServer : IDisposable
                 return;
             }
 
+            // The legacy raw-binary streaming path has no authentication mechanism at all —
+            // refuse it entirely whenever an access password is configured.
+            if (GetRequiredAuthToken() != null)
+                return;
+
             // Native Binary fallback
             var response = Encoding.ASCII.GetBytes("SPACEDESK_OK\n");
             await stream.WriteAsync(response, token);
@@ -125,7 +141,7 @@ public class SpacedeskTcpServer : IDisposable
             var frameHeader = new byte[8];
             while (!token.IsCancellationRequested && client.Connected)
             {
-                var (frameBytes, _, _, _) = _gdiCapture.CaptureFrameWithCursor(-1, 0, 0, 65);
+                var (frameBytes, _, _, _) = _legacyGdiCapture.CaptureFrameWithCursor(-1, 0, 0, 65);
                 if (frameBytes != null && frameBytes.Length > 0)
                 {
                     frameHeader[0] = (byte)'S';
@@ -168,57 +184,91 @@ public class SpacedeskTcpServer : IDisposable
         await stream.WriteAsync(Encoding.UTF8.GetBytes(response), token);
         Console.WriteLine("[WebSocket] OpenWinSidecar Session established.");
 
-        VirtualDisplayManager.EnableExtendMode();
+        using var streamLock = new SemaphoreSlim(1, 1);
+
+        var authToken = GetRequiredAuthToken();
+
+        // Tell the client up front whether it must authenticate (the challenge itself
+        // arrives per-attempt inside AuthenticateSessionAsync)
+        if (authToken != null)
+        {
+            await WebCodecsFraming.SendTextAsync(stream, streamLock, "auth:required", token);
+        }
+
+        // Authentication gate: when an access password is configured, the session stays
+        // completely inert (no stream, no input processing) until the client presents
+        // `auth:<token>` as its first WebSocket text message. Without a configured
+        // password the server runs open, as before.
+        if (authToken != null && !await AuthenticateSessionAsync(stream, streamLock, authToken, token))
+        {
+            return;
+        }
+
+        // Re-flashing the display topology on every session invalidates active Desktop
+        // Duplication handles (and flickers all monitors) — ensure it once per process
+        if (!_topologyEnsured)
+        {
+            VirtualDisplayManager.EnableExtendMode();
+            _topologyEnsured = true;
+        }
 
         var screens = Screen.AllScreens;
-        int selectedDisplay = screens.Length > 2 ? 2 : (screens.Length > 1 ? 0 : 0);
-        int reqWidth = 1180;
-        int reqHeight = 820;
-        long reqQuality = 80;
-        StreamCodec activeCodec = StreamCodec.IntraTurbo;
-        bool useDxgi = true; // Try DXGI first, fall back to GDI
-        bool dxgiLogged = false;
-        double reqZoom = 1.0;
+        int selectedDisplay = screens.Length > 2 ? 2 : 0;
+        var initialScreen = screens.Length > 2 ? screens[2] : screens[0];
 
-        bool showHostCursor = true;
+        var sink = _hub.CreateSink(stream, streamLock, initialScreen.DeviceName);
+        sink.TargetWidth = 1180;
+        sink.TargetHeight = 820;
+        _hub.EnsureProducer(sink.DeviceName);
+        Console.WriteLine($"[WebSocket] Streaming {initialScreen.DeviceName} ({initialScreen.Bounds.Width}x{initialScreen.Bounds.Height})");
 
-        _ = Task.Run(async () =>
+        // The full input-message chain, extracted so both the auth gate and the stream
+        // loop can route complete messages through it (each coalesced frame handled once).
+        void HandleClientMessage(string text)
         {
-            var wsBuffer = new byte[4096];
-            while (!token.IsCancellationRequested && client.Connected)
+            if (string.IsNullOrEmpty(text)) return;
             {
-                try
-                {
-                    int bytesRead = await stream.ReadAsync(wsBuffer, token);
-                    if (bytesRead <= 0) break;
-
-                    var text = ParseWsTextMessage(wsBuffer, bytesRead);
-                    if (!string.IsNullOrEmpty(text))
-                    {
                         if (text.StartsWith("codec:"))
                         {
                             var cStr = text.Substring(6).ToLowerInvariant();
-                            activeCodec = cStr switch
-                            {
-                                "hevc" or "h265" => StreamCodec.HEVC,
-                                "av1" => StreamCodec.AV1,
-                                "h264" => StreamCodec.H264,
-                                "intra" => StreamCodec.IntraTurbo,
-                                _ => StreamCodec.IntraTurbo
-                            };
+                            // Only HEVC is genuinely encoded; every other selection receives JPEG
+                            // intra frames, so the packet label must never claim h264/av1/hevc
+                            sink.Codec = (cStr == "hevc" || cStr == "h265") ? StreamCodec.HEVC : StreamCodec.IntraTurbo;
+                            Console.WriteLine($"[WebSocket] Client requested codec: {sink.Codec}");
+                        }
+                        else if (text.StartsWith("decerr:"))
+                        {
+                            // Client-side WebCodecs decoder failure report — the primary signal
+                            // for diagnosing Safari-specific HEVC support issues
+                            Console.WriteLine($"[WebSocket] Client decoder error: {text.Substring(7)}");
+                        }
+                        else if (text == "forceidr")
+                        {
+                            // Tab became visible again: restart the client's encoder so the next
+                            // frame is a fresh IDR (protects against decoder state Safari evicted)
+                            sink.ForceIdr();
                         }
                         else if (text.StartsWith("cursor:"))
                         {
                             var cMode = text.Substring(7).ToLowerInvariant();
-                            showHostCursor = (cMode == "host" || cMode == "show_host");
+                            sink.ShowHostCursor = (cMode == "host" || cMode == "show_host");
                         }
                         else if (text.StartsWith("display:"))
                         {
-                            if (int.TryParse(text.Substring(8), out var d)) selectedDisplay = d;
+                            if (int.TryParse(text.Substring(8), out var d))
+                            {
+                                selectedDisplay = d;
+                                var current = Screen.AllScreens;
+                                if (d >= 0 && d < current.Length)
+                                {
+                                    sink.DeviceName = current[d].DeviceName;
+                                    _hub.EnsureProducer(sink.DeviceName);
+                                }
+                            }
                         }
                         else if (text.StartsWith("quality:"))
                         {
-                            if (long.TryParse(text.Substring(8), out var q)) reqQuality = Math.Clamp(q, 10, 95);
+                            if (long.TryParse(text.Substring(8), out var q)) sink.Quality = (int)Math.Clamp(q, 10, 95);
                         }
                         else if (text.StartsWith("mode:extend"))
                         {
@@ -233,9 +283,15 @@ public class SpacedeskTcpServer : IDisposable
                             var parts = text.Substring(8).Split(',');
                             if (parts.Length >= 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
                             {
-                                reqWidth = w;
-                                reqHeight = h;
+                                sink.TargetWidth = w;
+                                sink.TargetHeight = h;
                                 Console.WriteLine($"[Resolution] Target resolution set: {w}x{h}");
+
+                                // Aspect-match the virtual display to the client's screen so the
+                                // stream fills it edge-to-edge (idempotent — skips when matched)
+                                var applied = DisplayResolutionManager.MatchVirtualDisplayToClient(w, h);
+                                if (applied != null)
+                                    Console.WriteLine($"[Resolution] Virtual display mode: {applied.Width}x{applied.Height} @ {applied.RefreshRate}Hz");
                             }
                         }
                         else if (text.StartsWith("dpi:"))
@@ -249,8 +305,8 @@ public class SpacedeskTcpServer : IDisposable
                         {
                             if (double.TryParse(text.Substring(5), System.Globalization.CultureInfo.InvariantCulture, out var z))
                             {
-                                reqZoom = Math.Clamp(z, 1.0, 3.0);
-                                Console.WriteLine($"[Magnification] UI Zoom set to: {reqZoom:F2}x");
+                                sink.Zoom = Math.Clamp(z, 1.0, 3.0);
+                                Console.WriteLine($"[Magnification] UI Zoom set to: {sink.Zoom:F2}x");
                             }
                         }
                         else if (text.StartsWith("input:"))
@@ -259,7 +315,7 @@ public class SpacedeskTcpServer : IDisposable
                             if (parts.Length >= 3 && double.TryParse(parts[1], System.Globalization.CultureInfo.InvariantCulture, out var px) && double.TryParse(parts[2], System.Globalization.CultureInfo.InvariantCulture, out var py))
                             {
                                 var action = parts[0];
-                                _inputDispatcher.MoveMouseToScreen(selectedDisplay, px, py, reqZoom);
+                                _inputDispatcher.MoveMouseToScreen(selectedDisplay, px, py, sink.Zoom);
                                 if (action == "down") _inputDispatcher.MouseClick(true, true);
                                 else if (action == "up") _inputDispatcher.MouseClick(true, false);
                             }
@@ -292,226 +348,237 @@ public class SpacedeskTcpServer : IDisposable
                         else if (text.StartsWith("rightclick"))
                         {
                             _inputDispatcher.MouseClick(false, true);
-                            await Task.Delay(30, token);
                             _inputDispatcher.MouseClick(false, false);
                         }
-                    }
+            }
+        }
+
+        _ = Task.Run(async () =>
+        {
+            // Browsers coalesce several WebSocket frames into one TCP segment (Safari does
+            // this on the connect burst), and reads can split frames — the assembler yields
+            // every complete text message in order. The old one-parse-per-read loop dropped
+            // all messages after the first, which is how 'codec:hevc' was being lost.
+            var wsBuffer = new byte[4096];
+            var assembler = new WsTextMessageAssembler();
+            while (!token.IsCancellationRequested && client.Connected)
+            {
+                try
+                {
+                    int bytesRead = await stream.ReadAsync(wsBuffer, token);
+                    if (bytesRead <= 0) break;
+
+                    assembler.OnData(wsBuffer, bytesRead, HandleClientMessage);
                 }
                 catch { break; }
             }
         }, token);
 
-        long frameIndex = 0;
-        var sw = Stopwatch.StartNew();
-        int dxgiFailCount = 0;
-        using var streamLock = new SemaphoreSlim(1, 1);
-        HevcQsvStreamEncoder? hevcEncoder = null;
-        int lastEncoderW = 0;
-        int lastEncoderH = 0;
-        int lastEncoderBitrate = 0;
-
+        // Consumer loop: the hub's display producer composes frames into the sink and
+        // signals it; this loop just encodes and sends. A slow client causes the producer
+        // to skip composing (drop-oldest) instead of queueing unbounded latency. On a
+        // static desktop no frames are composed at all — WebSocket pings keep the
+        // connection alive during those silent periods.
         try
         {
             while (!token.IsCancellationRequested && client.Connected)
             {
-                var captureStart = sw.ElapsedMilliseconds;
-
-                if (activeCodec == StreamCodec.HEVC)
+                bool signaled = await sink.WaitFrameAsync(5000, token);
+                if (signaled)
                 {
-                    int targetBitrate = (int)(reqQuality switch
-                    {
-                        <= 50 => 3000,
-                        <= 65 => 5000,
-                        <= 80 => 8000,
-                        _ => 12000
-                    });
-
-                    if (hevcEncoder == null || lastEncoderW != reqWidth || lastEncoderH != reqHeight || lastEncoderBitrate != targetBitrate)
-                    {
-                        hevcEncoder?.Shutdown();
-                        hevcEncoder = new HevcQsvStreamEncoder(async (nalBytes, isKey) =>
-                        {
-                            try
-                            {
-                                frameIndex++;
-                                await SendWebCodecsPacketAsync(stream, streamLock, (byte)StreamCodec.HEVC, isKey, frameIndex * 16666, 0, 0, false, nalBytes, token);
-                            }
-                            catch { }
-                        });
-
-                        if (hevcEncoder.Initialize(reqWidth, reqHeight, targetBitrate))
-                        {
-                            lastEncoderW = reqWidth;
-                            lastEncoderH = reqHeight;
-                            lastEncoderBitrate = targetBitrate;
-                        }
-                        else
-                        {
-                            hevcEncoder = null;
-                            activeCodec = StreamCodec.IntraTurbo;
-                        }
-                    }
-
-                    if (hevcEncoder != null)
-                    {
-                        byte[]? rawBytes = null;
-                        int curX = 0, curY = 0;
-                        bool curVis = false;
-
-                        var currentScreens = Screen.AllScreens;
-                        Screen? targetScreen = (selectedDisplay >= 0 && selectedDisplay < currentScreens.Length) ? currentScreens[selectedDisplay] : currentScreens[^1];
-
-                        if (useDxgi && targetScreen != null)
-                        {
-                            (rawBytes, curX, curY, curVis) = _dxgiCapture.CaptureRawBgraFrame(
-                                targetScreen.DeviceName,
-                                targetScreen.Bounds.X, targetScreen.Bounds.Y,
-                                targetScreen.Bounds.Width, targetScreen.Bounds.Height,
-                                reqWidth, reqHeight, reqZoom);
-                        }
-
-                        if (rawBytes == null || rawBytes.Length == 0)
-                        {
-                            (rawBytes, curX, curY, curVis) = _gdiCapture.CaptureRawBgraFrame(selectedDisplay, reqWidth, reqHeight, reqZoom);
-                        }
-
-                        if (rawBytes != null && rawBytes.Length > 0)
-                        {
-                            hevcEncoder.PushRawFrame(rawBytes);
-                        }
-                    }
+                    await sink.ProcessAndSendAsync(token);
                 }
                 else
                 {
-                    byte[]? frame = null;
-                    int curX = 0, curY = 0;
-                    bool curVis = false;
-
-                    var currentScreens = Screen.AllScreens;
-                    Screen? targetScreen = null;
-                    if (selectedDisplay >= 0 && selectedDisplay < currentScreens.Length)
-                        targetScreen = currentScreens[selectedDisplay];
-                    else if (currentScreens.Length > 2)
-                        targetScreen = currentScreens[2];
-                    else
-                        targetScreen = currentScreens[^1];
-
-                    // Try DXGI first
-                    if (useDxgi)
-                    {
-                        (frame, curX, curY, curVis) = _dxgiCapture.CaptureFrame(
-                            targetScreen.DeviceName,
-                            targetScreen.Bounds.X, targetScreen.Bounds.Y,
-                            targetScreen.Bounds.Width, targetScreen.Bounds.Height,
-                            reqWidth, reqHeight, reqQuality, showHostCursor);
-
-                        if (frame == null)
-                        {
-                            dxgiFailCount++;
-                            if (dxgiFailCount > 5)
-                            {
-                                if (!dxgiLogged) { Console.WriteLine("[Capture] DXGI unavailable — using GDI capture"); dxgiLogged = true; }
-                                useDxgi = false;
-                            }
-                        }
-                        else
-                        {
-                            dxgiFailCount = 0;
-                        }
-                    }
-
-                    // GDI fallback
-                    if (frame == null)
-                    {
-                        (frame, curX, curY, curVis) = _gdiCapture.CaptureFrameWithCursor(selectedDisplay, reqWidth, reqHeight, reqQuality, reqZoom, showHostCursor);
-                    }
-
-                    if (frame != null && frame.Length > 0)
-                    {
-                        frameIndex++;
-                        await SendWebCodecsPacketAsync(stream, streamLock, (byte)activeCodec, true, frameIndex * 16666, (short)curX, (short)curY, curVis, frame, token);
-                    }
+                    await WebCodecsFraming.SendPingAsync(stream, streamLock, token);
                 }
-
-                var elapsed = sw.ElapsedMilliseconds - captureStart;
-                int targetDelay = (int)Math.Max(1, 16 - elapsed);
-                await Task.Delay(targetDelay, token);
             }
         }
         finally
         {
-            hevcEncoder?.Shutdown();
+            sink.Dispose();
         }
     }
 
-    private static async Task SendWebCodecsPacketAsync(NetworkStream stream, SemaphoreSlim streamLock, byte codecType, bool isKeyframe, long timestampUs, short curX, short curY, bool curVisible, byte[] payload, CancellationToken token)
-    {
-        var header = new byte[15 + payload.Length];
-        header[0] = codecType;
-        header[1] = (byte)((isKeyframe ? 0x01 : 0) | (curVisible ? 0x02 : 0));
-        BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(2, 8), timestampUs);
-        BinaryPrimitives.WriteInt16BigEndian(header.AsSpan(10, 2), curX);
-        BinaryPrimitives.WriteInt16BigEndian(header.AsSpan(12, 2), curY);
-        payload.CopyTo(header, 15);
+    // ------------------------------------------------------------------
+    // Access authentication
+    // ------------------------------------------------------------------
 
-        await streamLock.WaitAsync(token);
+    private readonly OpenWinSidecar.Core.Services.SpacedeskRegistryManager _registryManager = new();
+
+    /// <summary>The configured access password, or null when the server runs open.</summary>
+    private string? GetRequiredAuthToken()
+    {
         try
         {
-            await SendWsBinaryFrameAsync(stream, header, token);
+            var pw = _registryManager.GetSettings().EncryptionPassword;
+            return string.IsNullOrWhiteSpace(pw) ? null : pw;
         }
-        finally
+        catch
         {
-            streamLock.Release();
+            return null;
         }
     }
 
-    private static string? ParseWsTextMessage(byte[] buffer, int length)
+    private static bool FixedTimeStringEquals(string a, string b)
     {
-        if (length < 6) return null;
-        bool masked = (buffer[1] & 0x80) != 0;
-        int payloadLen = buffer[1] & 0x7F;
-        int offset = 2;
-
-        if (payloadLen == 126) offset = 4;
-        else if (payloadLen == 127) offset = 10;
-
-        if (!masked) return Encoding.UTF8.GetString(buffer, offset, length - offset);
-
-        var mask = buffer.AsSpan(offset, 4);
-        offset += 4;
-        int dataLen = length - offset;
-        var decoded = new byte[dataLen];
-
-        for (int i = 0; i < dataLen; i++)
-        {
-            decoded[i] = (byte)(buffer[offset + i] ^ mask[i % 4]);
-        }
-
-        return Encoding.UTF8.GetString(decoded);
+        return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(a),
+            System.Text.Encoding.UTF8.GetBytes(b));
     }
 
-    private static async Task SendWsBinaryFrameAsync(NetworkStream stream, byte[] payload, CancellationToken token)
+    /// <summary>True when the query string carries pw=&lt;token&gt; matching the access password.</summary>
+    private static bool HttpQueryMatchesToken(string path, string token)
     {
-        byte[] header;
-        if (payload.Length <= 125)
+        var query = path.Contains('?') ? path[(path.IndexOf('?') + 1)..] : "";
+        foreach (var kv in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
-            header = new byte[] { 0x82, (byte)payload.Length };
+            var p = kv.Split('=');
+            if (p.Length == 2 && p[0] == "pw")
+                return FixedTimeStringEquals(Uri.UnescapeDataString(p[1]), token);
         }
-        else if (payload.Length <= 65535)
-        {
-            header = new byte[] { 0x82, 126, (byte)(payload.Length >> 8), (byte)(payload.Length & 0xFF) };
-        }
-        else
-        {
-            header = new byte[10];
-            header[0] = 0x82;
-            header[1] = 127;
-            BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(2, 8), payload.Length);
-        }
+        return false;
+    }
 
-        await stream.WriteAsync(header, token);
-        await stream.WriteAsync(payload, token);
-        await stream.FlushAsync(token);
+    /// <summary>
+    /// Challenge-response authentication: each attempt sends a fresh random
+    /// `authreq:&lt;challenge&gt;` and expects `auth:&lt;hex sha256(password + challenge)&gt;`,
+    /// so the password itself never crosses the wire. Plaintext is still accepted as a
+    /// fallback for legacy tools. Three attempts per connection (10-second window).
+    /// </summary>
+    private static async Task<bool> AuthenticateSessionAsync(NetworkStream stream, SemaphoreSlim streamLock, string authToken, CancellationToken token)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            var buf = new byte[4096];
+            var assembler = new WsTextMessageAssembler(); // Safari coalesces frames in one read
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                string challenge = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
+                await WebCodecsFraming.SendTextAsync(stream, streamLock, $"authreq:{challenge}", CancellationToken.None);
+
+                string? presented = null;
+                while (presented == null)
+                {
+                    int n = await stream.ReadAsync(buf, timeoutCts.Token);
+                    if (n <= 0) return false;
+
+                    assembler.OnData(buf, n, msg =>
+                    {
+                        if (msg.StartsWith("auth:", StringComparison.Ordinal))
+                            presented = msg["auth:".Length..];
+                    });
+                }
+
+                // Preferred: SHA-256(password + challenge) hex. Fallback: plaintext password
+                // (legacy tools) — a sniffed plaintext is useless against future challenges.
+                string expectedHash = Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(authToken + challenge)));
+
+                bool hashMatch = FixedTimeStringEquals(presented.ToLowerInvariant(), expectedHash.ToLowerInvariant());
+                bool plainMatch = FixedTimeStringEquals(presented, authToken);
+
+                if (hashMatch || plainMatch)
+                {
+                    await WebCodecsFraming.SendTextAsync(stream, streamLock, "auth:ok", CancellationToken.None);
+                    Console.WriteLine(plainMatch
+                        ? "[WebSocket] Session authenticated (plaintext fallback — client should upgrade)."
+                        : "[WebSocket] Session authenticated (challenge-response).");
+                    return true;
+                }
+
+                await WebCodecsFraming.SendTextAsync(stream, streamLock, "auth:denied", CancellationToken.None);
+                Console.WriteLine($"[WebSocket] Authentication attempt {attempt} failed.");
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch { }
+
+        Console.WriteLine("[WebSocket] Authentication failed — closing session.");
+        return false;
+    }
+
+    /// <summary>
+    /// A buffering WebSocket text-message parser. Browsers legitimately coalesce several
+    /// WebSocket frames into one TCP segment (Safari does this on the connect burst), and
+    /// reads may also split a frame across segments — the old one-parse-per-read loop
+    /// dropped every coalesced message after the first, losing 'codec:hevc' and friends.
+    /// Feed every read; complete text messages come out in order.
+    /// </summary>
+    private sealed class WsTextMessageAssembler
+    {
+        private readonly byte[] _acc = new byte[64 * 1024];
+        private int _accLen;
+
+        public void OnData(byte[] data, int length, Action<string> onMessage)
+        {
+            if (_accLen + length > _acc.Length) _accLen = 0; // malformed overflow — reset
+
+            Buffer.BlockCopy(data, 0, _acc, _accLen, length);
+            _accLen += length;
+
+            // Decode as many complete frames as are buffered
+            int pos = 0;
+            while (true)
+            {
+                if (_accLen - pos < 2) break;
+
+                bool masked = (_acc[pos + 1] & 0x80) != 0;
+                int payloadLen = _acc[pos + 1] & 0x7F;
+                int headerLen = 2;
+
+                if (payloadLen == 126)
+                {
+                    if (_accLen - pos < 4) break;
+                    payloadLen = (_acc[pos + 2] << 8) | _acc[pos + 3];
+                    headerLen = 4;
+                }
+                else if (payloadLen == 127)
+                {
+                    if (_accLen - pos < 10) break;
+                    payloadLen = (int)((long)_acc[pos + 2] << 56 | (long)_acc[pos + 3] << 48 |
+                                       (long)_acc[pos + 4] << 40 | (long)_acc[pos + 5] << 32 |
+                                       (long)_acc[pos + 6] << 24 | (long)_acc[pos + 7] << 16 |
+                                       (long)_acc[pos + 8] << 8  | _acc[pos + 9]);
+                    headerLen = 10;
+                }
+
+                int maskLen = masked ? 4 : 0;
+                int frameEnd = pos + headerLen + maskLen + payloadLen;
+                if (frameEnd > _accLen) break; // partial frame — wait for more data
+
+                bool isText = (_acc[pos] & 0x0F) == 0x1;
+                bool isFinal = (_acc[pos] & 0x80) != 0;
+
+                if (isText && isFinal && payloadLen > 0)
+                {
+                    var decoded = new byte[payloadLen];
+                    int dataStart = pos + headerLen + maskLen;
+                    if (masked)
+                    {
+                        for (int i = 0; i < payloadLen; i++)
+                            decoded[i] = (byte)(_acc[dataStart + i] ^ _acc[pos + headerLen + (i & 3)]);
+                    }
+                    else
+                    {
+                        Buffer.BlockCopy(_acc, dataStart, decoded, 0, payloadLen);
+                    }
+                    onMessage(Encoding.UTF8.GetString(decoded));
+                }
+
+                pos = frameEnd;
+            }
+
+            // Keep any trailing partial frame for the next read
+            if (pos > 0)
+            {
+                Buffer.BlockCopy(_acc, pos, _acc, 0, _accLen - pos);
+                _accLen -= pos;
+            }
+        }
     }
 
     private static async Task ServeHtmlViewerPageAsync(NetworkStream stream, CancellationToken token)
@@ -621,8 +688,10 @@ public class SpacedeskTcpServer : IDisposable
             background: rgba(28, 28, 36, 0.95);
             border-color: rgba(96, 165, 250, 0.6);
         }}
-        .dot {{ width: 8px; height: 8px; background: #10B981; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
-        .codec-tag {{ background: #10B981; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px; }}
+        /* State colors on the blue/yellow axis (readable under red-green color-vision
+           deficiencies); every state is also distinguishable by shape or text alone. */
+        .dot {{ width: 8px; height: 8px; background: #7CB7FF; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }}
+        .gear {{ font-size: 14px; opacity: 0.85; }}
         
         select, button {{
             background: rgba(30, 30, 38, 0.9);
@@ -704,6 +773,30 @@ public class SpacedeskTcpServer : IDisposable
             font-weight: 600;
             color: rgba(255, 255, 255, 0.7);
         }}
+        details.advanced {{
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            padding-top: 12px;
+            margin-top: 4px;
+        }}
+        details.advanced summary {{
+            font-size: 12.5px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            padding: 4px 0 10px;
+            list-style: none;
+        }}
+        details.advanced summary::before {{
+            content: '› ';
+            display: inline-block;
+            transition: transform 0.15s ease;
+        }}
+        details.advanced[open] summary::before {{
+            transform: rotate(90deg);
+        }}
+        details.advanced .setting-group + .setting-group {{
+            margin-top: 12px;
+        }}
         .btn-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -728,143 +821,189 @@ public class SpacedeskTcpServer : IDisposable
             width: 100%;
         }}
         @keyframes pulse {{ 0% {{ opacity: 1; transform: scale(1); }} 50% {{ opacity: 0.4; transform: scale(0.85); }} 100% {{ opacity: 1; transform: scale(1); }} }}
+        #auth-overlay {{
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.78);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            display: none; align-items: center; justify-content: center;
+            z-index: 200;
+        }}
+        #auth-overlay.active {{ display: flex; }}
+        .auth-card {{
+            width: 84%; max-width: 360px;
+            background: rgba(22,22,28,0.97);
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 20px; padding: 28px 24px;
+            text-align: center; color: #fff;
+        }}
+        .auth-title {{ font-size: 15px; font-weight: 700; margin: 10px 0 16px; }}
+        #auth-input {{
+            width: 100%; box-sizing: border-box;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 12px; padding: 12px 14px;
+            font-size: 15px; color: #fff; text-align: center; outline: none;
+        }}
+        #auth-input:focus {{ border-color: #3B82F6; }}
+        #auth-error {{ min-height: 16px; font-size: 12px; color: #F2C94C; margin-top: 8px; }}
+        .auth-btn {{
+            width: 100%; margin-top: 10px;
+            background: #3B82F6; border: none; border-radius: 12px;
+            padding: 12px; font-size: 14px; font-weight: 700; color: #fff;
+        }}
     </style>
 </head>
 <body>
     <div id='container'>
         <div id='top-pill' onclick='toggleSettingsModal()'>
             <span class='dot'></span>
-            <span id='fps'>60 FPS</span>
-            <span id='codec-badge' class='codec-tag'>HEVC GPU</span>
-            <span id='res-label'>1180x820</span>
-            <span style='font-size:13px;opacity:0.85;margin-left:2px;'>⚙️</span>
+            <span id='fps'>— FPS</span>
+            <span class='gear'>⚙</span>
         </div>
 
         <div id='settings-modal' onclick='onModalBackdropClick(event)'>
             <div class='modal-card' onclick='event.stopPropagation()'>
-                <div class='modal-header'>
-                    <div style='display:flex;align-items:center;gap:8px;'>
-                        <span style='font-size:18px;'>⚙️</span>
-                        <span style='font-size:16px;font-weight:700;'>OpenWinSidecar Settings</span>
+                    <div class='modal-header'>
+                        <div style='display:flex;align-items:center;gap:8px;'>
+                            <span style='font-size:16px;font-weight:700;'>Settings</span>
+                        </div>
+                        <button class='modal-close' onclick='closeSettingsModal()'>✕</button>
                     </div>
-                    <button class='modal-close' onclick='closeSettingsModal()'>✕</button>
-                </div>
 
                 <div class='modal-body'>
                     <div class='setting-group'>
-                        <label>🖥️ Target Display</label>
+                        <label>Display</label>
                         <select id='display-select' onchange='changeDisplay(this.value)'>
                             {displayOptions}
                         </select>
                     </div>
 
                     <div class='setting-group'>
-                        <label>🚀 Video Codec</label>
-                        <select id='codec-select' onchange='changeCodec(this.value)'>
-                            <option value='hevc' selected>🚀 HEVC / H.265 (Intel Arc GPU Accelerated)</option>
-                            <option value='intra'>🖼️ Intra JPEG (Universal Fallback)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>📱 Screen & Device Resolution</label>
-                        <select id='res-select' onchange='changeResolutionPreset(this.value)'>
-                            <option value='auto' selected>✨ Auto-Detect My Device Screen (Recommended)</option>
-                            <optgroup label='📱 iPad 10.9-inch / 11-inch Air / 10th-11th Gen (59:41)'>
-                                <option value='1180x820'>1180 x 820 — @2x Logical (Low Latency / Crisp UI)</option>
-                                <option value='2360x1640'>2360 x 1640 — Native 2K Retina</option>
-                            </optgroup>
-                            <optgroup label='🚀 iPad Pro 11-inch (M4)'>
-                                <option value='1210x834'>1210 x 834 — @2x Logical</option>
-                                <option value='2420x1668'>2420 x 1668 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='🚀 iPad Pro 11-inch (1st–4th Gen)'>
-                                <option value='1194x834'>1194 x 834 — @2x Logical</option>
-                                <option value='2388x1668'>2388 x 1668 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='👑 iPad Pro 13-inch (M4)'>
-                                <option value='1376x1032'>1376 x 1032 — @2x Logical</option>
-                                <option value='2752x2064'>2752 x 2064 — Native 3K Retina</option>
-                            </optgroup>
-                            <optgroup label='👑 iPad Pro 12.9-inch / Air 13-inch (4:3)'>
-                                <option value='1366x1024'>1366 x 1024 — @2x Logical</option>
-                                <option value='2732x2048'>2732 x 2048 — Native 3K Retina</option>
-                            </optgroup>
-                            <optgroup label='📱 iPad 10.2-inch (7th–9th Gen) (4:3)'>
-                                <option value='1080x810'>1080 x 810 — @2x Logical</option>
-                                <option value='2160x1620'>2160 x 1620 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='📱 iPad 9.7-inch & iPad mini Retina (4:3)'>
-                                <option value='1024x768'>1024 x 768 — @2x Logical</option>
-                                <option value='2048x1536'>2048 x 1536 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='📱 iPad mini 8.3-inch (6th Gen & A17 Pro)'>
-                                <option value='1133x744'>1133 x 744 — @2x Logical</option>
-                                <option value='2266x1488'>2266 x 1488 — Native Retina</option>
-                            </optgroup>
-                            <optgroup label='💻 PC Standard (16:9 / 16:10)'>
-                                <option value='1920x1080'>1920 x 1080 — 1080p Full HD</option>
-                                <option value='2560x1440'>2560 x 1440 — 1440p QHD</option>
-                            </optgroup>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>🖥️ Windows Display Scale (Text & Icons Size)</label>
-                        <select id='dpi-select' onchange='changeDpi(this.value)'>
-                            <option value='100'>100% (Native / Smallest)</option>
-                            <option value='125'>125% (Comfortable)</option>
-                            <option value='150'>150% (Large Text & UI)</option>
-                            <option value='175' selected>175% (Recommended for iPad)</option>
-                            <option value='200'>200% (Extra Large / Touch Friendly)</option>
-                            <option value='225'>225% (Huge UI)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>🔍 UI Magnification (Zoom Viewport)</label>
-                        <select id='zoom-select' onchange='changeZoom(this.value)'>
-                            <option value='1.0' selected>🖥️ 1.0x (100% Full Desktop)</option>
-                            <option value='1.25'>📱 1.25x (125% Comfortable)</option>
-                            <option value='1.5'>🔎 1.5x (150% Large UI)</option>
-                            <option value='1.75'>✨ 1.75x (175% Extra Large)</option>
-                            <option value='2.0'>🔍 2.0x (200% Huge Touch UI)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>🖱️ Mouse Cursor Mode</label>
-                        <select id='cursor-select' onchange='changeCursorMode(this.value)'>
-                            <option value='host' selected>🖥️ Streamed Windows Cursor (Default - Zero Duplicate)</option>
-                            <option value='touch'>📱 Touch Tablet (Hide All Cursors)</option>
-                            <option value='client'>💻 Browser Cursor (Native OS)</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>💎 Quality Preset</label>
+                        <label>Quality</label>
                         <select id='quality-select' onchange='changeQuality(this.value)'>
-                            <option value='50'>⚡ 50% Quality (Fastest)</option>
-                            <option value='65'>⚖️ 65% Quality (Balanced)</option>
-                            <option value='80' selected>💎 80% Quality (High Detail - Default)</option>
-                            <option value='90'>👑 90% Quality (Ultra Crisp)</option>
+                            <option value='50'>50% — fastest</option>
+                            <option value='65'>65% — balanced</option>
+                            <option value='80' selected>80% — high detail</option>
+                            <option value='90'>90% — ultra crisp</option>
                         </select>
                     </div>
 
                     <div class='setting-group'>
-                        <label>🛠️ Quick Actions</label>
+                        <label>Cursor</label>
+                        <select id='cursor-select' onchange='changeCursorMode(this.value)'>
+                            <option value='host' selected>Streamed Windows cursor</option>
+                            <option value='touch'>Hidden (touch mode)</option>
+                            <option value='client'>Browser cursor</option>
+                        </select>
+                    </div>
+
+                    <div class='setting-group'>
+                        <label>Actions</label>
                         <div class='btn-grid'>
-                            <button class='action-btn' onclick='syncResolutionNow()'>🎯 Apply Res</button>
-                            <button id='fit-btn' onclick='toggleFitMode()'>📐 Fit / Stretch</button>
-                            <button id='kbd-btn' onclick='toggleVirtualKeyboard()'>⌨️ Keyboard</button>
-                            <button id='fullscreen-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
+                            <button class='action-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
+                            <button id='kbd-btn' onclick='toggleVirtualKeyboard()'>⌨ Keyboard</button>
                         </div>
                     </div>
+
+                    <details class='advanced'>
+                        <summary>More options</summary>
+                        <div class='setting-group'>
+                            <label>Video codec</label>
+                            <select id='codec-select' onchange='changeCodec(this.value)'>
+                                <option value='hevc' selected>HEVC / H.265 (hardware)</option>
+                                <option value='intra'>Intra JPEG (fallback)</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Resolution</label>
+                            <select id='res-select' onchange='changeResolutionPreset(this.value)'>
+                                <option value='auto' selected>Auto-detect this device (recommended)</option>
+                                <optgroup label='iPad 10.9-inch / 11-inch Air / 10th-11th Gen'>
+                                    <option value='1180x820'>1180 x 820 — @2x logical</option>
+                                    <option value='2360x1640'>2360 x 1640 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 11-inch (M4)'>
+                                    <option value='1210x834'>1210 x 834 — @2x logical</option>
+                                    <option value='2420x1668'>2420 x 1668 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 11-inch (1st–4th Gen)'>
+                                    <option value='1194x834'>1194 x 834 — @2x logical</option>
+                                    <option value='2388x1668'>2388 x 1668 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 13-inch (M4)'>
+                                    <option value='1376x1032'>1376 x 1032 — @2x logical</option>
+                                    <option value='2752x2064'>2752 x 2064 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 12.9-inch / Air 13-inch'>
+                                    <option value='1366x1024'>1366 x 1024 — @2x logical</option>
+                                    <option value='2732x2048'>2732 x 2048 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad 10.2-inch (7th–9th Gen)'>
+                                    <option value='1080x810'>1080 x 810 — @2x logical</option>
+                                    <option value='2160x1620'>2160 x 1620 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad 9.7-inch & iPad mini Retina'>
+                                    <option value='1024x768'>1024 x 768 — @2x logical</option>
+                                    <option value='2048x1536'>2048 x 1536 — native</option>
+                                </optgroup>
+                                <optgroup label='iPad mini 8.3-inch (6th Gen & A17 Pro)'>
+                                    <option value='1133x744'>1133 x 744 — @2x logical</option>
+                                    <option value='2266x1488'>2266 x 1488 — native</option>
+                                </optgroup>
+                                <optgroup label='PC Standard'>
+                                    <option value='1920x1080'>1920 x 1080 — Full HD</option>
+                                    <option value='2560x1440'>2560 x 1440 — QHD</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Windows display scale</label>
+                            <select id='dpi-select' onchange='changeDpi(this.value)'>
+                                <option value='100'>100% — native</option>
+                                <option value='125'>125%</option>
+                                <option value='150'>150%</option>
+                                <option value='175' selected>175% — recommended</option>
+                                <option value='200'>200%</option>
+                                <option value='225'>225%</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>UI magnification</label>
+                            <select id='zoom-select' onchange='changeZoom(this.value)'>
+                                <option value='1.0' selected>1.0x — full desktop</option>
+                                <option value='1.25'>1.25x</option>
+                                <option value='1.5'>1.5x</option>
+                                <option value='1.75'>1.75x</option>
+                                <option value='2.0'>2.0x</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Aspect</label>
+                            <div class='btn-grid'>
+                                <button id='fit-btn' onclick='toggleFitMode()'>📐 Fit / Stretch</button>
+                            </div>
+                        </div>
+                    </details>
                 </div>
 
                 <div class='modal-footer'>
                     <button class='done-btn' onclick='closeSettingsModal()'>Done</button>
                 </div>
+            </div>
+        </div>
+
+        <div id='auth-overlay' onclick='onAuthBackdropClick(event)'>
+            <div class='auth-card'>
+                <div style='font-size:34px;'>🔒</div>
+                <div class='auth-title'>This screen is password protected</div>
+                <input id='auth-input' type='password' placeholder='Password' autocomplete='off'>
+                <div id='auth-error'></div>
+                <button class='auth-btn' onclick='submitAuth()'>Watch screen</button>
             </div>
         </div>
 
@@ -884,7 +1023,7 @@ public class SpacedeskTcpServer : IDisposable
         const container = document.getElementById('container');
         const pointerDot = document.getElementById('pointer-dot');
         const fpsLabel = document.getElementById('fps');
-        const resLabel = document.getElementById('res-label');
+        
         const resSelect = document.getElementById('res-select');
         const qualitySelect = document.getElementById('quality-select');
         const codecSelect = document.getElementById('codec-select');
@@ -895,6 +1034,49 @@ public class SpacedeskTcpServer : IDisposable
         let isRendering = false;
         let videoDecoder = null;
         let hevcReady = false;
+        let hevcSupportKnown = false;
+        let hevcSupported = false;
+
+        // Probe WebCodecs once per device: ask the browser whether it can hardware-decode
+        // HEVC. Fail-safe by design: never throws, never hangs (2s timeout), and answers
+        // false on any doubt — the stream starts on JPEG and upgrades only on a clear yes.
+        async function detectHevcSupportSafe() {{
+            if (hevcSupportKnown) return hevcSupported;
+            if (!window.VideoDecoder || !VideoDecoder.isConfigSupported) {{
+                hevcSupportKnown = true;
+                hevcSupported = false;
+                return false;
+            }}
+            try {{
+                // optimizeForLatency omitted: some WebKit builds reject the probe with it,
+                // and its absence doesn't change the capability answer meaningfully.
+                const probe = VideoDecoder.isConfigSupported({{
+                    codec: 'hvc1.1.6.L93.B0',
+                    hardwareAcceleration: 'prefer-hardware'
+                }});
+                const support = await Promise.race([
+                    probe,
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 2000))
+                ]);
+                hevcSupported = !!(support && support.supported);
+            }} catch (e) {{
+                hevcSupported = false; // timeout/throw -> treat as unsupported, stream JPEG
+            }}
+            hevcSupportKnown = true;
+            console.log('[WebCodecs] HEVC hardware decode ' + (hevcSupported ? 'available' : 'NOT available') + ' on this device');
+            return hevcSupported;
+        }}
+
+        // Kept for compatibility with earlier call sites
+        async function detectHevcSupport() {{ return detectHevcSupportSafe(); }}
+
+        // Default codec per device capability; called after the socket opens
+        async function pickDefaultCodec() {{
+            const canHevc = await detectHevcSupport();
+            const want = canHevc ? 'hevc' : 'intra';
+            if (codecSelect) codecSelect.value = want;
+            return want;
+        }}
 
         function toggleSettingsModal() {{
             const modal = document.getElementById('settings-modal');
@@ -925,6 +1107,9 @@ public class SpacedeskTcpServer : IDisposable
             }}
         }}
 
+        let pendingHvcC = null;
+        let pendingCodec = 'hvc1.1.6.L93.B0';
+
         function initHevcDecoder() {{
             if (!window.VideoDecoder) return false;
             try {{
@@ -944,20 +1129,26 @@ public class SpacedeskTcpServer : IDisposable
                     }},
                     error: (e) => {{
                         console.warn('[WebCodecs HEVC Fallback]', e);
+                        // Report the failure reason to the server for diagnostics
+                        if (ws && ws.readyState === WebSocket.OPEN) {{
+                            const why = (e && (e.message || e.toString())) || 'unknown';
+                            ws.send('decerr:' + why);
+                        }}
                         changeCodec('intra');
                     }}
                 }});
 
-                videoDecoder.configure({{
-                    codec: 'hvc1.1.6.L93.B0',
-                    codedWidth: 1180,
-                    codedHeight: 820,
+                const config = {{
+                    codec: pendingCodec,
                     hardwareAcceleration: 'prefer-hardware',
                     optimizeForLatency: true
-                }});
+                }};
+                if (pendingHvcC) config.description = pendingHvcC;
+
+                videoDecoder.configure(config);
 
                 hevcReady = true;
-                console.log('[WebCodecs] Hardware HEVC VideoDecoder initialized');
+                console.log('[WebCodecs] Hardware HEVC VideoDecoder initialized', pendingHvcC ? 'with hvcC description' : 'Annex-B mode');
                 return true;
             }} catch (err) {{
                 console.warn('[WebCodecs] HEVC not supported:', err);
@@ -968,8 +1159,6 @@ public class SpacedeskTcpServer : IDisposable
         function changeCodec(val) {{
             if (ws && ws.readyState === WebSocket.OPEN) {{
                 ws.send('codec:' + val);
-                const badge = document.getElementById('codec-badge');
-                if (badge) badge.innerText = (val === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
             }}
             if (val === 'hevc') initHevcDecoder();
         }}
@@ -1036,7 +1225,6 @@ public class SpacedeskTcpServer : IDisposable
 
         function syncResolutionNow() {{
             const opt = getOptimalResolution();
-            resLabel.innerText = `${{opt.width}}x${{opt.height}}`;
             if (ws && ws.readyState === WebSocket.OPEN) {{
                 console.log(`[Sync] Adjusting to low-latency target resolution: ${{opt.width}}x${{opt.height}}`);
                 ws.send(`set_res:${{opt.width}},${{opt.height}}`);
@@ -1060,6 +1248,114 @@ public class SpacedeskTcpServer : IDisposable
             }} catch (e) {{ }}
         }}
 
+        let authenticated = true; // open servers never ask for a password
+        let authChallenge = null; // current server challenge (authreq:<challenge>)
+
+        // Pure-JS SHA-256: crypto.subtle is unavailable on http://LAN-IP (non-secure context)
+        function sha256Hex(ascii) {{
+            function rightRotate(v, a) {{ return (v >>> a) | (v << (32 - a)); }}
+            const K = [
+                0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+                0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+                0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+                0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+                0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+                0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+                0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+                0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+            ];
+            const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+            const bytes = [];
+            for (let i = 0; i < ascii.length; i++) {{
+                let c = ascii.charCodeAt(i);
+                if (c < 128) bytes.push(c);
+                else if (c < 2048) {{ bytes.push((c >> 6) | 192, (c & 63) | 128); }}
+                else {{ bytes.push((c >> 12) | 224, ((c >> 6) & 63) | 128, (c & 63) | 128); }}
+            }}
+            const bitLen = bytes.length * 8;
+            bytes.push(0x80);
+            while (bytes.length % 64 !== 56) bytes.push(0);
+            for (let i = 7; i >= 0; i--) bytes.push((bitLen / Math.pow(2, i * 8)) & 0xFF);
+            for (let block = 0; block < bytes.length / 64; block++) {{
+                const w = new Array(64);
+                for (let t = 0; t < 16; t++) {{
+                    const o = block * 64 + t * 4;
+                    w[t] = (bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3];
+                }}
+                for (let t = 16; t < 64; t++) {{
+                    const s0 = rightRotate(w[t - 15], 7) ^ rightRotate(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+                    const s1 = rightRotate(w[t - 2], 17) ^ rightRotate(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+                    w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+                }}
+                let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+                for (let t = 0; t < 64; t++) {{
+                    const S1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+                    const ch = (e & f) ^ (~e & g);
+                    const temp1 = (h + S1 + ch + K[t] + w[t]) | 0;
+                    const S0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+                    const maj = (a & b) ^ (a & c) ^ (b & c);
+                    const temp2 = (S0 + maj) | 0;
+                    h = g; g = f; f = e; e = (d + temp1) | 0;
+                    d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+                }}
+                H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+                H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+            }}
+            return H.map(x => ('00000000' + ((x >>> 0).toString(16))).slice(-8)).join('');
+        }}
+
+        function syncSessionSettings() {{
+            syncResolutionNow();
+            const c = (codecSelect ? codecSelect.value : 'hevc');
+            changeCodec(c); // explicit codec message every (re)connect — server always starts on a known path
+            const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.5';
+            changeZoom(z);
+            const sel = document.getElementById('display-select').value;
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send('display:' + sel);
+        }}
+
+        function showAuthPrompt(err) {{
+            const overlay = document.getElementById('auth-overlay');
+            if (!overlay) return;
+            authenticated = false;
+            overlay.classList.add('active');
+            const errEl = document.getElementById('auth-error');
+            if (errEl) errEl.innerText = err || '';
+            const input = document.getElementById('auth-input');
+            if (input) {{ input.value = ''; setTimeout(() => input.focus(), 150); }}
+        }}
+
+        function hideAuthPrompt() {{
+            const overlay = document.getElementById('auth-overlay');
+            if (overlay) overlay.classList.remove('active');
+        }}
+
+        function submitAuth() {{
+            const input = document.getElementById('auth-input');
+            const pw = input ? input.value : '';
+            if (!pw || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            if (authChallenge) {{
+                // Challenge-response: send SHA-256(password + challenge), never the password
+                const resp = sha256Hex(pw + authChallenge);
+                ws.send('auth:' + resp);
+            }} else {{
+                ws.send('auth:' + pw); // legacy servers without a challenge
+            }}
+        }}
+
+        function onAuthBackdropClick(e) {{
+            if (e.target && e.target.id === 'auth-overlay') submitAuth();
+        }}
+
+        const authInput = document.getElementById('auth-input');
+        if (authInput) {{
+            authInput.addEventListener('keydown', (e) => {{
+                e.stopPropagation();
+                if (e.key === 'Enter') submitAuth();
+            }});
+        }}
+
         function connectWs() {{
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${{protocol}}//${{location.host}}/`);
@@ -1069,24 +1365,77 @@ public class SpacedeskTcpServer : IDisposable
                 console.log('[OpenWinSidecar] Stream Connected');
                 requestWakeLock();
                 syncResolutionNow();
-                
-                const c = (codecSelect ? codecSelect.value : 'hevc');
-                changeCodec(c);
 
+                // ALWAYS send an explicit codec choice so the server starts streaming on a
+                // known path. The probe refines it when it resolves (fail-safe: a hung or
+                // throwing isConfigSupported on some Safari versions can never stall the
+                // stream — JPEG flows immediately, HEVC upgrades it when confirmed).
                 const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.5';
                 changeZoom(z);
 
                 const sel = document.getElementById('display-select').value;
                 ws.send('display:' + sel);
 
-                const badge = document.getElementById('codec-badge');
-                if (badge) {{
-                    badge.innerText = (c === 'hevc' ? 'HEVC GPU' : 'JPEG INTRA');
-                    badge.style.background = '#10B981';
+                let c = (codecSelect ? codecSelect.value : 'hevc');
+                changeCodec(c); // start streaming NOW with the current selection (default: hevc -> server encodes; probe may switch to intra)
+
+                if (c === 'hevc') {{
+                    const canHevc = await detectHevcSupportSafe();
+                    if (!canHevc) {{
+                        codecSelect.value = 'intra';
+                        changeCodec('intra');
+                    }}
                 }}
             }};
 
             ws.onmessage = async (e) => {{
+                if (typeof e.data === 'string') {{
+                    // Server-side control messages
+                    if (e.data.startsWith('desc:')) {{
+                        // hvcC description + codec string for Safari's WebCodecs HEVC decode
+                        const spec = e.data.substring(5);
+                        const sep = spec.indexOf('|');
+                        if (sep > 0) {{
+                            pendingCodec = spec.substring(0, sep);
+                            try {{
+                                const bin = atob(spec.substring(sep + 1));
+                                const bytes = new Uint8Array(bin.length);
+                                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                                pendingHvcC = bytes.buffer;
+                                console.log('[WebCodecs] hvcC description received:', pendingCodec, bytes.length, 'bytes');
+                            }} catch (err) {{
+                                console.warn('[WebCodecs] bad hvcC payload', err);
+                                pendingHvcC = null;
+                            }}
+                            if (codecSelect && codecSelect.value === 'hevc') initHevcDecoder();
+                        }}
+                        return;
+                    }}
+                    if (e.data === 'auth:required') {{
+                        // Challenge arrives separately via authreq:<challenge>
+                        showAuthPrompt('');
+                        return;
+                    }}
+                    if (e.data.startsWith('authreq:')) {{
+                        authChallenge = e.data.substring('authreq:'.length);
+                        showAuthPrompt('');
+                        return;
+                    }}
+                    if (e.data === 'auth:ok') {{
+                        hideAuthPrompt();
+                        syncSessionSettings();
+                        return;
+                    }}
+                    if (e.data === 'auth:denied') {{
+                        showAuthPrompt('Wrong password — try again.');
+                        return;
+                    }}
+                    // Server-side codec fallback notification (e.g. QSV encoder unavailable)
+                    if (e.data === 'codec:intra') {{
+                        if (codecSelect) codecSelect.value = 'intra';
+                    }}
+                    return;
+                }}
                 if (e.data instanceof ArrayBuffer) {{
                     const headerView = new DataView(e.data, 0, 15);
                     const codecType = headerView.getUint8(0);
@@ -1156,11 +1505,8 @@ public class SpacedeskTcpServer : IDisposable
             }};
 
             ws.onclose = () => {{
-                const badge = document.getElementById('codec-badge');
-                if (badge) {{
-                    badge.innerText = 'RECONNECTING...';
-                    badge.style.background = '#EF4444';
-                }}
+                const fps = document.getElementById('fps');
+                if (fps) fps.textContent = '⟳ reconnecting';
                 setTimeout(connectWs, 1000);
             }};
         }}
@@ -1274,15 +1620,42 @@ public class SpacedeskTcpServer : IDisposable
         }}, {{ passive: false }});
 
         // --- Keyboard forwarding ---
+        // Physical-key (e.code) → Windows VK mapping: stable across active input layouts
+        // and immune to the IME keyCode-229 problem. Falls back to e.keyCode for codes
+        // not in the table (or legacy browsers without e.code).
+        const CODE_TO_VK = {{
+            Escape:27, Digit1:49, Digit2:50, Digit3:51, Digit4:52, Digit5:53, Digit6:54, Digit7:55, Digit8:56, Digit9:57, Digit0:48,
+            Minus:189, Equal:187, Backspace:8, Tab:9,
+            KeyQ:81, KeyW:87, KeyE:69, KeyR:82, KeyT:84, KeyY:89, KeyU:85, KeyI:73, KeyO:79, KeyP:80,
+            BracketLeft:219, BracketRight:221, Backslash:220, CapsLock:20,
+            KeyA:65, KeyS:83, KeyD:68, KeyF:70, KeyG:71, KeyH:72, KeyJ:74, KeyK:75, KeyL:76,
+            Semicolon:186, Quote:222, Enter:13,
+            KeyZ:90, KeyX:88, KeyC:67, KeyV:86, KeyB:66, KeyN:78, KeyM:77,
+            Comma:188, Period:190, Slash:191, Space:32,
+            Insert:45, Delete:46, Home:36, End:35, PageUp:33, PageDown:34,
+            ArrowLeft:37, ArrowUp:38, ArrowRight:39, ArrowDown:40,
+            Backquote:192,
+            F1:112, F2:113, F3:114, F4:115, F5:116, F6:117, F7:118, F8:119, F9:120, F10:121, F11:122, F12:123,
+            ShiftLeft:160, ShiftRight:161, ControlLeft:162, ControlRight:163, AltLeft:164, AltRight:165,
+            Numpad0:96, Numpad1:97, Numpad2:98, Numpad3:99, Numpad4:100, Numpad5:101, Numpad6:102, Numpad7:103, Numpad8:104, Numpad9:105,
+            NumpadMultiply:106, NumpadAdd:107, NumpadSubtract:109, NumpadDecimal:110, NumpadDivide:111
+        }};
+        function eventToVk(e) {{
+            if (e.code && CODE_TO_VK[e.code] !== undefined) return CODE_TO_VK[e.code];
+            return e.keyCode; // legacy fallback
+        }}
+
         document.addEventListener('keydown', (e) => {{
+            if (!authenticated) return; // don't forward keystrokes while the password prompt is up
             if (ws && ws.readyState === WebSocket.OPEN) {{
-                ws.send('key:down,' + e.keyCode);
+                ws.send('key:down,' + eventToVk(e));
                 if (!e.metaKey && !e.ctrlKey) e.preventDefault();
             }}
         }});
         document.addEventListener('keyup', (e) => {{
+            if (!authenticated) return;
             if (ws && ws.readyState === WebSocket.OPEN) {{
-                ws.send('key:up,' + e.keyCode);
+                ws.send('key:up,' + eventToVk(e));
                 e.preventDefault();
             }}
         }});
@@ -1348,6 +1721,12 @@ public class SpacedeskTcpServer : IDisposable
         window.addEventListener('orientationchange', () => setTimeout(syncResolutionNow, 300));
         document.addEventListener('visibilitychange', () => {{
             if (document.visibilityState === 'visible') setTimeout(syncResolutionNow, 100);
+            // Returning from a backgrounded tab: Safari may have evicted decoder state, so
+            // ask the server to restart the encoder — the next frame is a fresh IDR and the
+            // delta chain can never reference frames the decoder no longer has.
+            if (document.visibilityState === 'visible' && authenticated && ws && ws.readyState === WebSocket.OPEN) {{
+                ws.send('forceidr');
+            }}
         }});
 
         connectWs();
@@ -1414,6 +1793,6 @@ public class SpacedeskTcpServer : IDisposable
     public void Dispose()
     {
         Stop();
-        _dxgiCapture.Dispose();
+        _hub.Dispose();
     }
 }

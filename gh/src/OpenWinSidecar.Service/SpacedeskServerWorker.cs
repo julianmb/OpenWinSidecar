@@ -29,7 +29,7 @@ public class SpacedeskServerWorker : BackgroundService
 
         _discoveryServer = new SpacedeskDiscoveryServer(28252);
         _discoveryServer.Start();
-        _logger.LogInformation("OpenWinSidecar LAN UDP Discovery Broadcast responder started on port 28252");
+        _logger.LogInformation("Spacedesk LAN UDP Discovery Broadcast responder started on port 28252");
 
         _tcpServer = new SpacedeskTcpServer(28252);
         _tcpServer.Start();

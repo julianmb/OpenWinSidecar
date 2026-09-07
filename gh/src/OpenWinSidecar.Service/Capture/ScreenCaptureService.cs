@@ -311,6 +311,118 @@ public class ScreenCaptureService
         }
     }
 
+    private Bitmap? _nativeBitmap;
+
+    /// <summary>
+    /// Captures the display into a reusable Bitmap for the broadcast producer. GDI reads on
+    /// indirect (IddCx) displays are expensive at full resolution (~260ms for 2560-wide 1:1
+    /// blits), so the working bitmap is capped at 1180px wide — the proven fallback throughput
+    /// — while keeping aspect ratio. Desktop Duplication (DXGI) remains the full-res primary.
+    /// The cursor is never composited — its screen-space position and handle are returned so
+    /// each subscriber can stamp its own cursor state. Returns false only on hard failure.
+    /// </summary>
+    public bool CaptureNativeFrame(int displayIndex, NativeFrame frame)
+    {
+        EnsureInteractiveDesktop();
+
+        var (screen, _) = ResolveScreen(displayIndex);
+        int srcWidth = screen.Bounds.Width;
+        int srcHeight = screen.Bounds.Height;
+        int srcX = screen.Bounds.X;
+        int srcY = screen.Bounds.Y;
+
+        if (srcWidth <= 0 || srcHeight <= 0)
+        {
+            srcWidth = 2360;
+            srcHeight = 1640;
+        }
+
+        // Capped working resolution (even-aligned), aspect-preserving
+        int width = Math.Min(srcWidth, 1180);
+        width = (width / 2) * 2;
+        int height = (int)Math.Round((double)width * srcHeight / srcWidth);
+        height = (height / 2) * 2;
+        if (height < 2) height = 2;
+
+        CursorInterop.FillFrameCursor(frame);
+
+        IntPtr srcDc = IntPtr.Zero;
+        bool isDirectDeviceDc = false;
+
+        try
+        {
+            srcDc = CreateDC("DISPLAY", screen.DeviceName, null, IntPtr.Zero);
+            if (srcDc != IntPtr.Zero) isDirectDeviceDc = true;
+            else srcDc = GetDC(IntPtr.Zero);
+
+            if (srcDc == IntPtr.Zero) return false;
+
+            if (_nativeBitmap == null || _nativeBitmap.Width != width || _nativeBitmap.Height != height)
+            {
+                _nativeBitmap?.Dispose();
+                _nativeBitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            }
+
+            // Blit through a DDB (compatible bitmap) — StretchBlt directly into a 32bpp DIB
+            // section reads the indirect display at ~260ms, while the DDB route is ~10-40ms.
+            IntPtr memDc = IntPtr.Zero;
+            IntPtr hBitmap = IntPtr.Zero;
+            IntPtr oldObj = IntPtr.Zero;
+            try
+            {
+                memDc = CreateCompatibleDC(srcDc);
+                hBitmap = CreateCompatibleBitmap(srcDc, width, height);
+                oldObj = SelectObject(memDc, hBitmap);
+
+                int copySrcX = isDirectDeviceDc ? 0 : srcX;
+                int copySrcY = isDirectDeviceDc ? 0 : srcY;
+
+                if (width == srcWidth && height == srcHeight)
+                {
+                    BitBlt(memDc, 0, 0, width, height, srcDc, copySrcX, copySrcY, SRCCOPY);
+                }
+                else
+                {
+                    SetStretchBltMode(memDc, COLORONCOLOR);
+                    StretchBlt(memDc, 0, 0, width, height, srcDc, copySrcX, copySrcY, srcWidth, srcHeight, SRCCOPY);
+                }
+
+                SelectObject(memDc, oldObj);
+                oldObj = IntPtr.Zero;
+
+                using var blitted = Image.FromHbitmap(hBitmap);
+                using (var g = Graphics.FromImage(_nativeBitmap))
+                {
+                    g.DrawImage(blitted, 0, 0, width, height);
+                }
+            }
+            finally
+            {
+                if (oldObj != IntPtr.Zero) SelectObject(memDc, oldObj);
+                if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+                if (memDc != IntPtr.Zero) DeleteDC(memDc);
+            }
+
+            frame.Bitmap = _nativeBitmap;
+            frame.Width = width;
+            frame.Height = height;
+            frame.Captured = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (srcDc != IntPtr.Zero)
+            {
+                if (isDirectDeviceDc) DeleteDC(srcDc);
+                else ReleaseDC(IntPtr.Zero, srcDc);
+            }
+        }
+    }
+
     public (byte[]? rawBgra, int curX, int curY, bool curVisible) CaptureRawBgraFrame(int displayIndex = -1, int targetWidth = 0, int targetHeight = 0, double zoom = 1.0)
     {
         EnsureInteractiveDesktop();

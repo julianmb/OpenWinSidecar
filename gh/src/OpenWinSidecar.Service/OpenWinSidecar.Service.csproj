@@ -7,8 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <RootNamespace>OpenWinSidecar.Service</RootNamespace>
-    <AssemblyName>OpenWinSidecar.Service</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

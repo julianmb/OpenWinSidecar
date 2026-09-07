@@ -9,8 +9,6 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>OpenWinSidecar.Cli</RootNamespace>
-    <AssemblyName>OpenWinSidecar.Cli</AssemblyName>
   </PropertyGroup>
 
 </Project>
