@@ -143,15 +143,91 @@ public sealed class ClientFrameSink : IDisposable
             int cropX = (nativeW - cropW) / 2;
             int cropY = (nativeH - cropH) / 2;
 
+
             if (_composeBitmap == null || _composeBitmap.Width != dstW || _composeBitmap.Height != dstH)
             {
                 _composeBitmap?.Dispose();
                 _composeBitmap = new Bitmap(dstW, dstH, PixelFormat.Format32bppArgb);
             }
 
-            using (var g = Graphics.FromImage(_composeBitmap))
+
+            // 2:1 Retina→logical decimation: direct stride copy (every 2nd row/col) — GDI+
+            // DrawImage measured 7.8ms for the same operation; this is plain memory moves.
+            int stepX = cropW / dstW;
+            int stepY = cropH / dstH;
+            if (stepX >= 2 && stepY >= 2 && cropX % stepX == 0 && cropY % stepY == 0 && cropW == dstW * stepX && cropH == dstH * stepY)
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                var srcData = frame.Bitmap.LockBits(
+                    new Rectangle(cropX, cropY, cropW, cropH),
+                    ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                var dstData = _composeBitmap!.LockBits(
+                    new Rectangle(0, 0, dstW, dstH),
+                    ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+                try
+                {
+                    unsafe
+                    {
+                        byte* src = (byte*)srcData.Scan0;
+                        byte* dst = (byte*)dstData.Scan0;
+                        for (int y = 0; y < dstH; y++)
+                        {
+                            uint* s = (uint*)(src + (long)y * stepY * srcData.Stride);
+                            uint* d = (uint*)(dst + (long)y * dstData.Stride);
+                            for (int x = 0; x < dstW; x++)
+                                d[x] = s[x * stepX];
+                        }
+                    }
+                }
+                finally
+                {
+                    frame.Bitmap.UnlockBits(srcData);
+                    _composeBitmap.UnlockBits(dstData);
+                }
+
+                _cursorVisible = false;
+                if (ShowHostCursor && frame.CursorVisible)
+                {
+                    int relX = frame.CursorGlobalX - screenX - cropX;
+                    int relY = frame.CursorGlobalY - screenY - cropY;
+
+                    if (relX >= -32 && relX < cropW + 32 && relY >= -32 && relY < cropH + 32)
+                    {
+                        double scaleX = (double)dstW / cropW;
+                        double scaleY = (double)dstH / cropH;
+
+                        _cursorX = (int)(relX * scaleX);
+                        _cursorY = (int)(relY * scaleY);
+                        _cursorVisible = true;
+
+                        using var g = Graphics.FromImage(_composeBitmap);
+                        IntPtr hdc = g.GetHdc();
+                        try
+                        {
+                            CursorInterop.DrawIconEx(
+                                hdc,
+                                (int)((relX - frame.CursorHotspotX) * scaleX),
+                                (int)((relY - frame.CursorHotspotY) * scaleY),
+                                frame.CursorHandle,
+                                Math.Max(16, (int)(32 * scaleX)),
+                                Math.Max(16, (int)(32 * scaleY)),
+                                0, IntPtr.Zero, CursorInterop.DI_NORMAL);
+                        }
+                        finally
+                        {
+                            g.ReleaseHdc(hdc);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Non-integer scale or crop: GDI+ path (rarer; zoom presets etc.)
+                using (var g = Graphics.FromImage(_composeBitmap))
+                {
+                bool integerScale = stepX >= 1 && stepY >= 1 && cropW % dstW == 0 && cropH % dstH == 0;
+                g.InterpolationMode = integerScale
+                    ? System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor
+                    : System.Drawing.Drawing2D.InterpolationMode.Bilinear;
                 g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighSpeed;
                 g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
                 g.DrawImage(
@@ -191,6 +267,7 @@ public sealed class ClientFrameSink : IDisposable
                             g.ReleaseHdc(hdc);
                         }
                     }
+                }
                 }
             }
 
