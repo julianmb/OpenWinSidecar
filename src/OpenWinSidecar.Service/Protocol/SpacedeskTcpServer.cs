@@ -1178,16 +1178,13 @@ public class SpacedeskTcpServer : IDisposable
             targetW = Math.floor(targetW / 2) * 2;
             targetH = Math.floor(targetH / 2) * 2;
 
-            // Stream at the device's PHYSICAL pixel size when it's a Retina-class screen
-            // (dpr >= 2) — a native 2360x1640 stream means compose is a 1:1 copy instead
-            // of a per-frame bilinear downscale (10-14ms -> <1ms), and HEVC carries the
-            // extra pixels easily. Non-Retina devices keep the CSS-point size.
-            if (dpr >= 2) {{
-                targetW = Math.round(targetW * dpr);
-                targetH = Math.round(targetH * dpr);
-            }}
-
-            return {{ width: targetW, height: targetH, dpr: dpr, physicalW: targetW, physicalH: targetH }};
+            // Stream at the device's LOGICAL (CSS-point) size: the canvas upscales to the
+            // physical panel anyway, and 1180x820-class streams cost ~4x less bandwidth,
+            // GPU-encode time, and iPad decode energy than 2360x1640 — with no visible
+            // difference for desktop UI at arm's length. Compose handles the 2:1 Retina
+            // downscale losslessly (nearest-neighbor integer decimation, ~1ms).
+            // Users who want true Retina pixels can still pick a native preset explicitly.
+            return {{ width: targetW, height: targetH, dpr: dpr, physicalW: Math.round(targetW * dpr), physicalH: Math.round(targetH * dpr) }};
         }}
 
         function getOptimalResolution() {{
