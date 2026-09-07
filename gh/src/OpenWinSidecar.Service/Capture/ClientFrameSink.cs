@@ -438,13 +438,42 @@ public sealed class ClientFrameSink : IDisposable
         var bitmap = _composeBitmap!;
         int width = bitmap.Width;
         int height = bitmap.Height;
-        int bitrate = Quality switch
+
+        // Resolution-aware bitrate: quality tiers are tuned for the ~1180x820 logical
+        // baseline (~1MP); larger frames scale UP sub-linearly (HEVC compresses
+        // high-res content more efficiently per pixel, so 4x pixels need ~2.5x bitrate,
+        // not 4x). Native 2360x1640 at Q80 lands ~20 Mbps class instead of 32.
+        double megapixels = (double)width * height / 1_000_000;
+        double scale = Math.Clamp(Math.Pow(Math.Max(megapixels, 1.0) / 0.97, 0.66), 1.0, 2.6);
+        int bitrate = (int)(Quality switch
         {
             <= 50 => 3000,
             <= 65 => 5000,
             <= 80 => 8000,
             _ => 12000
-        };
+        } * scale);
+
+        // Bandwidth feedback: a 2-second rolling window of HEVC wire bytes. While the
+        // produced rate exceeds the ceiling, step the bitrate floor down; when it fits
+        // (and quality/resolution haven't changed), ease the floor back up.
+        if (_hevcWindowStartTicks == 0) _hevcWindowStartTicks = Environment.TickCount64;
+        double windowSec = (Environment.TickCount64 - _hevcWindowStartTicks) / 1000.0;
+        if (windowSec >= 2.0)
+        {
+            double bps = _hevcBytesWindow * 8.0 / windowSec;
+            if (bps > HevcBandwidthCeiling)
+            {
+                _hevcBitrateFloor = Math.Max(2000, (_hevcBitrateFloor == 0 ? bitrate : _hevcBitrateFloor) - 2000);
+                Console.WriteLine($"[Sink] {DeviceName}: HEVC wire rate {bps / 1e6:F1} Mbps > ceiling — bitrate floor -> {_hevcBitrateFloor} kbps");
+            }
+            else if (bps < HevcBandwidthCeiling * 0.6 && _hevcBitrateFloor > 0)
+            {
+                _hevcBitrateFloor = 0; // healthy again — lift the floor
+            }
+            _hevcBytesWindow = 0;
+            _hevcWindowStartTicks = Environment.TickCount64;
+        }
+        if (_hevcBitrateFloor > 0) bitrate = Math.Min(bitrate, _hevcBitrateFloor);
 
         // Client requested a clean reference state (tab visible again): restart the encoder
         // so the next frame is a fresh IDR
@@ -526,9 +555,16 @@ public sealed class ClientFrameSink : IDisposable
             await WebCodecsFraming.SendPacketAsync(
                 _stream, _streamLock, (byte)StreamCodec.HEVC,
                 isKeyframe, timestampUs, 0, 0, false, nalBytes, CancellationToken.None);
+            _hevcBytesWindow += nalBytes.Length; // single-threaded consumer — no interlocking needed
         }
         catch { }
     }
+
+    // HEVC bandwidth feedback (consumer-thread state; simple window like the JPEG controller)
+    private const long HevcBandwidthCeiling = 20_000_000; // healthy Wi-Fi ceiling
+    private long _hevcBytesWindow;
+    private long _hevcWindowStartTicks;
+    private int _hevcBitrateFloor; // 0 = unset; steps down while the wire rate exceeds the ceiling
 
     private async Task SendHvcCDescriptionAsync(string codecString, byte[] hvcC)
     {
