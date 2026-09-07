@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Net.Sockets;
 
 namespace OpenWinSidecar.Service.Capture;
@@ -132,7 +130,6 @@ internal sealed class DisplayCaptureProducer : IDisposable
     private Screen? _screen;
     private int _screenIndex;
     private DateTime _nextScreenRefreshUtc = DateTime.MinValue;
-    private bool _isVirtualDisplay;
     private bool _useDxgi = true;
     private bool _dxgiFailLogged;
     private bool _gdiSeedLogged;
@@ -140,15 +137,6 @@ internal sealed class DisplayCaptureProducer : IDisposable
     private int _dxgiNoFrameTicks;
     private DateTime _nextDxgiRetryUtc = DateTime.MinValue;
     private int _idleTicks;
-
-    // Watermark resources (virtual-display "active canvas" overlay), created lazily
-    private Pen? _gridPen;
-    private SolidBrush? _cardBrush;
-    private Pen? _cardBorderPen;
-    private SolidBrush? _textBrush;
-    private SolidBrush? _subBrush;
-    private Font? _titleFont;
-    private Font? _subFont;
 
     public string DeviceName => _deviceName;
 
@@ -251,22 +239,8 @@ internal sealed class DisplayCaptureProducer : IDisposable
             }
         }
 
-        if (_screen != null)
-        {
-            // The IddCx virtual monitor enumerates as \\.\DISPLAY8x (DISPLAY85/86/...);
-            // physical outputs on real GPUs stay in the low numbering range.
-            _isVirtualDisplay = _screenIndex == 2 || IsVirtualDeviceName(_screen.DeviceName);
-        }
-
         return _screen != null;
     }
-
-    private static bool IsVirtualDeviceName(string deviceName)
-    {
-        var match = System.Text.RegularExpressions.Regex.Match(deviceName, @"DISPLAY(\d+)");
-        return match.Success && int.TryParse(match.Groups[1].Value, out var num) && num >= 80;
-    }
-
     private void CaptureTick()
     {
         if (!RefreshScreenIfNeeded()) return;
@@ -343,11 +317,6 @@ internal sealed class DisplayCaptureProducer : IDisposable
     {
         if (_frame.Bitmap == null) return;
 
-        if (_frame.Captured && _isVirtualDisplay)
-        {
-            DrawVirtualDisplayWatermark(_frame.Bitmap);
-        }
-
         int screenX = _screen?.Bounds.X ?? 0;
         int screenY = _screen?.Bounds.Y ?? 0;
         long timestampUs = _hub.NowUs();
@@ -359,62 +328,10 @@ internal sealed class DisplayCaptureProducer : IDisposable
         }
     }
 
-    private void DrawVirtualDisplayWatermark(Bitmap bitmap)
-    {
-        EnsureWatermarkResources();
-        var gridPen = _gridPen!;
-        var cardBrush = _cardBrush!;
-        var cardBorderPen = _cardBorderPen!;
-        var textBrush = _textBrush!;
-        var subBrush = _subBrush!;
-        var titleFont = _titleFont!;
-        var subFont = _subFont!;
-
-        int width = bitmap.Width;
-        int height = bitmap.Height;
-
-        using var g = Graphics.FromImage(bitmap);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-
-        for (int gx = 0; gx < width; gx += 60) g.DrawLine(gridPen, gx, 0, gx, height);
-        for (int gy = 0; gy < height; gy += 60) g.DrawLine(gridPen, 0, gy, width, gy);
-
-        int cardW = Math.Min(520, width - 40);
-        int cardH = 96;
-        int cardX = (width - cardW) / 2;
-        int cardY = (height - cardH) / 2;
-
-        g.FillRectangle(cardBrush, cardX, cardY, cardW, cardH);
-        g.DrawRectangle(cardBorderPen, cardX, cardY, cardW, cardH);
-
-        g.DrawString("📱 OpenWinSidecar Display", titleFont, textBrush, cardX + 20, cardY + 16);
-        g.DrawString($"Virtual Monitor • {width}x{height} • Ultra-Low Latency Mode", subFont, subBrush, cardX + 20, cardY + 56);
-    }
-
-    private void EnsureWatermarkResources()
-    {
-        if (_gridPen != null) return;
-        _gridPen = new Pen(Color.FromArgb(16, 255, 255, 255), 1);
-        _cardBrush = new SolidBrush(Color.FromArgb(140, 18, 18, 22));
-        _cardBorderPen = new Pen(Color.FromArgb(50, 255, 255, 255), 1f);
-        _textBrush = new SolidBrush(Color.White);
-        _subBrush = new SolidBrush(Color.FromArgb(160, 200, 255));
-        _titleFont = new Font("Segoe UI", 16, FontStyle.Bold);
-        _subFont = new Font("Segoe UI", 11, FontStyle.Regular);
-    }
-
     public void Dispose()
     {
         _cts?.Cancel();
         try { _loop?.Wait(500); } catch { }
         _dxgi.Dispose();
-
-        _gridPen?.Dispose();
-        _cardBrush?.Dispose();
-        _cardBorderPen?.Dispose();
-        _textBrush?.Dispose();
-        _subBrush?.Dispose();
-        _titleFont?.Dispose();
-        _subFont?.Dispose();
     }
 }

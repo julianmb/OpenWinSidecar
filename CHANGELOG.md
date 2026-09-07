@@ -73,7 +73,7 @@ Clean build; challenge-response auth end-to-end (wrong hash → denied, correct 
 ### Added
 - **Client decoder-error reporting**: Safari's `VideoDecoder` error handler now sends `decerr:<message>` back to the server, which logs it — the primary diagnostic for whether iPads hardware-decode the HEVC stream (previously a failure was silent: the client just fell back to JPEG with no reason recorded server-side).
 - **Codec-request logging**: the server logs which codec the client requests per session.
-- Password rotated on this machine (`564D7EC4` → user-set); docs and test scripts synced. Access password currently `123` — weak, rotate via Console → Preferences.
+- Password rotated on this machine (`[REDACTED — see note]` → user-set); docs and test scripts synced. Access password managed via Console → Preferences.
 
 ### Verified
 Local HEVC regression after the changes: authenticated client receives the Main-profile IDR (93 KB, hvcC `hvc1.1.40000000.L120.90`), idle-skip behavior normal. Ready for on-device iPad validation.
@@ -200,7 +200,7 @@ Client-side reconstruction of the received chunks back to Annex-B, probed with f
   - `/input` HTTP endpoint: requires matching `pw=` query parameter, else 403.
   - Legacy raw-binary path (no auth mechanism exists): refused entirely when a password is configured.
   - Web client: password overlay on `auth:required`, re-prompt on denial, hides on success, re-syncs settings after `auth:ok`, and suspends keystroke forwarding while the prompt is up (so typing the password doesn't type into Windows).
-  - *Verified:* scripted client — required → denied → ok → frames; `/input` 403 without `pw`, 200 with. Note: this machine has password `564D7EC4` configured (pre-existing; previously ignored).
+  - *Verified:* scripted client — required → denied → ok → frames; `/input` 403 without `pw`, 200 with. Note: a password was configured on this machine at the time (since cleared; default is no password).
 - **Idle-frame skip (bandwidth).**
   - *Why:* intra-only JPEG re-sent an identical ~43 KB frame 60×/s — ~20 Mbps of nothing on a static desktop.
   - *What:* the sink skips compose+encode+send when desktop pixels, streamed cursor, and sink settings are all unchanged. WebSocket pings every 5 s keep the connection alive during silence.
