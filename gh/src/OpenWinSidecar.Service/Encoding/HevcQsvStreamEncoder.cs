@@ -132,15 +132,21 @@ public sealed class HevcQsvStreamEncoder : IDisposable
                 //                          which iPads software-decode — NV12 keeps Main profile
                 //                          hardware decode on every Apple device.
                 //                          (extra_hw_frames breaks the D3D11 pool on this driver.)
+                //   -preset ultrafast      minimal GPU time per frame — the encoder shares the
+                //                          GPU with Desktop Duplication capture, and heavy
+                //                          presets stalled the producer loop (60→37 ticks/s)
                 //   -bf 0                  no B-frames (output order == input order)
                 //   -g 240                 4s GOP — every client has its own encoder instance and
                 //                          therefore joins on an IDR, so frequent keyframes only
-                //                          cost quality; -async_depth 1 minimizes encoder buffering
+                //                          cost quality
+                //   async_depth default     1 forced a synchronous GPU wait per frame (part of the
+                //                          same capture stall); QSV's small default buffer keeps
+                //                          added latency in the single-frame range
                 var args = $"-hide_banner -loglevel error -init_hw_device qsv=hw -filter_hw_device hw " +
                            $"-f rawvideo -pix_fmt bgra -s {_width}x{_height} -r 60 -i pipe:0 " +
                            $"-vf format=nv12,hwupload " +
-                           $"-c:v hevc_qsv -preset veryfast -b:v {_bitrateKbps}k -maxrate {(_bitrateKbps * 3 / 2)}k -bufsize {(_bitrateKbps / 4)}k " +
-                           $"-g 240 -bf 0 -async_depth 1 -an -f hevc pipe:1";
+                           $"-c:v hevc_qsv -preset ultrafast -b:v {_bitrateKbps}k -maxrate {(_bitrateKbps * 3 / 2)}k -bufsize {(_bitrateKbps / 4)}k " +
+                           $"-g 240 -bf 0 -an -f hevc pipe:1";
 
                 var psi = new ProcessStartInfo
                 {
