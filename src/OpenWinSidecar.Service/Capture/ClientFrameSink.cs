@@ -259,7 +259,39 @@ public sealed class ClientFrameSink : IDisposable
             Interlocked.Exchange(ref _busy, 0);
 
             _statFrames++;
-            _statMs += (_hub.NowUs() - stageStartUs) / 1000.0;
+            double frameMs = (_hub.NowUs() - stageStartUs) / 1000.0;
+            _statMs += frameMs;
+
+            // Adaptive JPEG quality: crisp native-resolution text compresses 3-4x worse
+            // than the old downscaled frames, so a fixed quality can saturate the network
+            // and stall fluidity. Track the encode+send window and step quality down
+            // while over budget, recovering slowly when healthy. The client's Quality
+            // setting is the ceiling and 40 is the floor.
+            if (Codec == StreamCodec.IntraTurbo)
+            {
+                if (frameMs > AdaptiveTargetMs)
+                {
+                    _adaptiveStrikes++;
+                    _adaptiveRecovery = 0;
+                    if (_adaptiveStrikes >= 8 && _adaptiveQuality > 40)
+                    {
+                        _adaptiveQuality = Math.Max(40, _adaptiveQuality - 10);
+                        _adaptiveStrikes = 0;
+                        Console.WriteLine($"[Sink] {DeviceName}: JPEG quality -> {_adaptiveQuality}% (frame {frameMs:F0}ms > {AdaptiveTargetMs:F0}ms target)");
+                    }
+                }
+                else
+                {
+                    _adaptiveStrikes = 0;
+                    if (++_adaptiveRecovery >= 180 && _adaptiveQuality < Quality)
+                    {
+                        _adaptiveQuality = Math.Min(Quality, _adaptiveQuality + 10);
+                        _adaptiveRecovery = 0;
+                        Console.WriteLine($"[Sink] {DeviceName}: JPEG quality recovered -> {_adaptiveQuality}%");
+                    }
+                }
+            }
+
             if (_statMs >= 1500)
             {
                 Console.WriteLine($"[Sink] {DeviceName}: encode+send {_statMs / _statFrames:F1}ms/frame over {_statFrames} frames ({_statFrames / (_statMs / 1000.0):F0}/s)");
@@ -274,14 +306,27 @@ public sealed class ClientFrameSink : IDisposable
     private int _sendCount;
     private DateTime _sendStartUtc = DateTime.UtcNow;
 
+    // Adaptive JPEG quality state (IntraTurbo path)
+    private const double AdaptiveTargetMs = 14;   // keep encode+send within one 60fps slot
+    private int _adaptiveQuality = 80;             // effective quality; capped by the client's Quality setting
+    private int _adaptiveStrikes;                  // consecutive over-budget frames
+    private int _adaptiveRecovery;                 // consecutive healthy frames
+
     private async Task SendJpegAsync(CancellationToken token)
     {
         using var ms = new MemoryStream(32768);
+        int quality = Math.Clamp(Math.Min(_adaptiveQuality, Quality), 10, 95);
         using var encParams = new EncoderParameters(1);
-        encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, Math.Clamp(Quality, 10, 95));
+        encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
         _composeBitmap!.Save(ms, JpegEncoder, encParams);
 
         var frameBytes = ms.ToArray();
+
+        // Bandwidth-driven quality learning: crisp native-resolution text frames can
+        // exceed 150KB (40+ Mbps at 60fps — beyond Wi-Fi). Heavy frames count as strikes
+        // in the adaptive controller (no second encode: encode time is the latency-critical path).
+        if (frameBytes.Length > 52_000) _adaptiveStrikes++;
+
         long ts = _timestampUs;
         short cx = (short)Math.Clamp(_cursorX, short.MinValue, short.MaxValue);
         short cy = (short)Math.Clamp(_cursorY, short.MinValue, short.MaxValue);
