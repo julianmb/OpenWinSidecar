@@ -4,6 +4,23 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-12 — Windows installer groundwork (Inno Setup + winget manifests)
+
+### Added
+- `installer/OpenWinSidecar.iss`: admin installer (Program Files layout, VDD driver registration via pnputil, firewall rule, Start Menu entry, clean uninstall with firewall/task cleanup). Silent switches (`/SILENT`) included for winget. Debug symbols excluded from packaging.
+- Self-contained single-file publish recipe (in the .iss header): no .NET runtime needed on the target machine (~89MB exe).
+- `gh/winget/`: v0.1.0 manifests (`julianmb.OpenWinSidecar`) + submission README. SHA-256 intentionally left as placeholder until the installer is built.
+- Root `LICENSE` (AGPL-3.0, mirrors `gh/LICENSE`) so the installer script resolves `..\LICENSE` in both trees; `tools/sync_gh_mirror.ps1` now mirrors `installer/` too.
+
+### Pending (needs an elevated session / release)
+- Install Inno Setup 6, compile the .iss, test install + uninstall locally.
+- Tag `v0.1`, GitHub Release with `OpenWinSidecar-Setup-0.1.0.exe` attached, fill manifest hash, submit to winget-pkgs.
+
+### Verified
+- `dotnet publish` self-contained win-x64 succeeds (89MB single exe). .iss reviewed against Inno 6 schema (uncompiled — compiler pending).
+
+---
+
 ## 2026-09-11 — Viewer ghost clicks: UI taps no longer reach the desktop
 
 ### Fixed

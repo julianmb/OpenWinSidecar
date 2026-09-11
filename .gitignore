@@ -12,6 +12,9 @@ obj/
 # scratch captures
 scratch_screen_*.jpg
 test.h265
+# installer build outputs (script + staging stay tracked)
+installer/output/
+installer/stage/
 
 # heavy driver archives (extracted files under drivers/VDD are what we use)
 drivers/VDD/vdd_control.zip
