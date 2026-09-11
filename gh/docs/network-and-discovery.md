@@ -6,19 +6,19 @@ OpenWinSidecar operates on standard ports `80`, `8080`, and **`28252`**:
 
 | Protocol | Port | Service Component | Purpose |
 |---|---|---|---|
-| **UDP** | `28252` | `SpacedeskDiscoveryServer` | Broadcast Discovery & Viewer Beaconing |
-| **TCP / HTTP** | `80, 8080, 28252` | `SpacedeskTcpServer` | HTML5 Web Viewer, HTTP Input API |
-| **WebSocket** | `80, 8080, 28252` | `SpacedeskTcpServer` | Low-Latency Binary Video Stream & Bidirectional Control |
+| **UDP** | `28252` | `SidecarDiscoveryServer` | Broadcast Discovery & Viewer Beaconing |
+| **TCP / HTTP** | `80, 8080, 28252` | `SidecarTcpServer` | HTML5 Web Viewer, HTTP Input API |
+| **WebSocket** | `80, 8080, 28252` | `SidecarTcpServer` | Low-Latency Binary Video Stream & Bidirectional Control |
 
 ---
 
-## 2. UDP Discovery Protocol (`SpacedeskDiscoveryServer.cs`)
+## 2. UDP Discovery Protocol (`SidecarDiscoveryServer.cs`)
 
 Standard discovery packets across the local subnet:
-1. `SpacedeskDiscoveryServer` binds to `0.0.0.0:28252` with `SO_REUSEADDR`.
+1. `SidecarDiscoveryServer` binds to `0.0.0.0:28252` with `SO_REUSEADDR`.
 2. Responds to discovery probes with:
    ```text
-   SPACEDESK_SERVER;NAME=<MachineName>;PORT=28252;VER=1.0;DISPLAYS=1\n
+   SIDECAR_SERVER;NAME=<MachineName>;PORT=28252;VER=1.0;DISPLAYS=1\n
    ```
 
 ---

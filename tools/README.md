@@ -10,7 +10,7 @@ powershell -NoProfile -MTA -ExecutionPolicy Bypass -File tools\<script>.ps1
 | Script | What it verifies |
 |---|---|
 | `ws_smoke_test.ps1` | Baseline streaming: connects (JPEG path), counts frames/FPS/bandwidth, checks codec labels and timestamp monotonicity. **Note: predates auth — set no password or extend it with the auth handshake from `ws_auth_test.ps1`.** |
-| `ws_auth_test.ps1` | Authentication flow: expects `auth:required`, sends a wrong then the correct `auth:ok` password, measures frames, checks `/input` 403 without `pw=` and 200 with. **Edit the `$Password` default to the machine's actual `EncryptionPassword` (HKLM `SOFTWARE\datronicsoft\spacedesk\Service`).** |
+| `ws_auth_test.ps1` | Authentication flow: expects `auth:required`, sends a wrong then the correct `auth:ok` password, measures frames, checks `/input` 403 without `pw=` and 200 with. **Edit the `$Password` default to the machine's actual `EncryptionPassword` (HKLM `SOFTWARE\OpenWinSidecar\Service`).** |
 | `ws_wire_test.ps1` | Wire integrity: proper WebSocket message assembly (partial-message aware), distinct-timestamp/duplicate detection, codec counts, true bandwidth. |
 | `ws_hevc_validate.ps1` | Hardware HEVC: requests `codec:hevc`, receives the `desc:` hvcC + length-prefixed AU chunks, reconstructs an Annex-B elementary stream, writes `hevc_test.265` for ffprobe. First-chunk bytes must be a 4-byte length (`00 00 00 21…`), not a start code. |
 | `enum_vdd_modes.ps1` | Enumerates `EnumDisplayDevices`/`EnumDisplaySettings` for the virtual display (`\\.\DISPLAY8x`): which resolutions/refresh rates the driver actually advertises vs. what `vdd_settings.xml` promises. |

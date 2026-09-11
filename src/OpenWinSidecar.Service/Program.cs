@@ -1,30 +1,23 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using OpenWinSidecar.Service;
-using System.Runtime.InteropServices;
+using System;
+using System.Threading.Tasks;
 
-TimerResolution.timeBeginPeriod(1);
+namespace OpenWinSidecar.Service;
 
-var builder = Host.CreateApplicationBuilder(args);
-
-builder.Services.AddWindowsService(options =>
+public static class ServiceProgram
 {
-    options.ServiceName = "OpenWinSidecarService";
-});
-
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-
-builder.Services.AddHostedService<SpacedeskServerWorker>();
-
-var host = builder.Build();
-host.Run();
-
-internal static class TimerResolution
-{
-    // Raise the Windows timer resolution so the 60 FPS producer pacing (Task.Delay ~6ms)
-    // isn't quantized to the default ~15.6ms scheduler tick.
-    [DllImport("winmm.dll")]
-    internal static extern int timeBeginPeriod(uint msPeriod);
+    public static void Main(string[] args)
+    {
+        using var host = new StreamingServerHost();
+        host.OnLog += msg => Console.WriteLine(msg);
+        host.Start();
+        Console.WriteLine("OpenWinSidecar Streaming Server Host active. Press Ctrl+C to exit.");
+        var tcs = new TaskCompletionSource();
+        Console.CancelKeyPress += (s, e) =>
+        {
+            e.Cancel = true;
+            tcs.TrySetResult();
+        };
+        tcs.Task.Wait();
+        host.Stop();
+    }
 }

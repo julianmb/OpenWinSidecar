@@ -31,7 +31,7 @@ dotnet run --project src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj
 
 - `src/OpenWinSidecar.Core`: Win32 CCD DPI engine, Virtual Display Manager, and Windows Service controller.
 - `src/OpenWinSidecar.Service`: Real-time screen capture (DXGI Desktop Duplication / GDI), hardware encoder (HEVC QSV), multi-port HTTP/WebSocket server, and input dispatcher.
-- `src/OpenWinSidecar.Console`: WPF management dashboard and system tray interface.
+- `src/OpenWinSidecar`: WPF management dashboard and system tray interface.
 - `src/OpenWinSidecar.Cli`: Lightweight command-line utility for automation and headless status queries.
 - `drivers/VDD`: Signed IddCx Virtual Display Driver configuration and installer files.
 - `docs/`: Technical guides, architecture diagrams, and hardware benchmarks.

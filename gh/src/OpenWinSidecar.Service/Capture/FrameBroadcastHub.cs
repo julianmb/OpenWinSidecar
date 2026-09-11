@@ -22,9 +22,9 @@ public sealed class FrameBroadcastHub : IDisposable
 
     internal long NowUs() => _clock.ElapsedTicks * 1_000_000 / Stopwatch.Frequency;
 
-    public ClientFrameSink CreateSink(NetworkStream stream, SemaphoreSlim streamLock, string deviceName)
+    public ClientFrameSink CreateSink(NetworkStream stream, SemaphoreSlim streamLock, string deviceName, string remoteAddress = "")
     {
-        return new ClientFrameSink(this, stream, streamLock, deviceName);
+        return new ClientFrameSink(this, stream, streamLock, deviceName) { RemoteAddress = remoteAddress };
     }
 
     public void RegisterSink(ClientFrameSink sink)
@@ -75,20 +75,21 @@ public sealed class FrameBroadcastHub : IDisposable
         }
     }
 
-    internal List<ClientFrameSink> GetSinksFor(string deviceName)
+    /// <summary>
+    /// Fills <paramref name="buffer"/> with the sinks targeting <paramref name="deviceName"/>.
+    /// The producer reuses one buffer per tick, so the 60 Hz capture loop allocates nothing
+    /// for sink enumeration (the previous <c>GetSinksFor</c> allocated up to four lists/tick).
+    /// </summary>
+    internal void FillSinksFor(string deviceName, List<ClientFrameSink> buffer)
     {
+        buffer.Clear();
         lock (_sync)
         {
-            List<ClientFrameSink>? matches = null;
             foreach (var sink in _sinks)
             {
                 if (string.Equals(sink.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
-                {
-                    matches ??= new List<ClientFrameSink>();
-                    matches.Add(sink);
-                }
+                    buffer.Add(sink);
             }
-            return matches ?? new List<ClientFrameSink>();
         }
     }
 
@@ -116,16 +117,21 @@ public sealed class FrameBroadcastHub : IDisposable
 /// </summary>
 internal sealed class DisplayCaptureProducer : IDisposable
 {
-    private const int DxgiFailoverThreshold = 5;
+    private const int DxgiFailoverThreshold = 3;
     private const int IdleTicksBeforeRetire = 120;   // ~2s with no subscribers
 
     private readonly FrameBroadcastHub _hub;
     private readonly string _deviceName;
     private readonly DxgiCaptureService _dxgi = new();
     private readonly ScreenCaptureService _gdi = new();
-    private readonly NativeFrame _frame = new();
+
+    // The published frame (what ComposeTick hands to sinks, producer thread only) plus one
+    // scratch wrapper. GDI captures write into the scratch and are swapped in only on success,
+    // so a failed/timed-out capture can never clear or half-overwrite the frame being served.
+    private NativeFrame _frame = new();
+    private NativeFrame _gdiFrame = new();
+    private readonly List<ClientFrameSink> _sinkScratch = new();
     private CancellationTokenSource? _cts;
-    private Task? _loop;
 
     private Screen? _screen;
     private int _screenIndex;
@@ -137,6 +143,7 @@ internal sealed class DisplayCaptureProducer : IDisposable
     private int _dxgiNoFrameTicks;
     private DateTime _nextDxgiRetryUtc = DateTime.MinValue;
     private int _idleTicks;
+    private int _screenRefreshRate = 60;
 
     public string DeviceName => _deviceName;
 
@@ -146,24 +153,33 @@ internal sealed class DisplayCaptureProducer : IDisposable
         _deviceName = deviceName;
     }
 
+    private Thread? _thread;
+    private int _screenOriginX;
+    private int _screenOriginY;
+
     public void Start()
     {
-        if (_loop != null) return;
+        if (_thread != null) return;
         _cts = new CancellationTokenSource();
-        _loop = Task.Run(() => LoopAsync(_cts.Token));
+        _thread = new Thread(() => Loop(_cts.Token))
+        {
+            Name = $"DisplayCapture-{_deviceName}",
+            IsBackground = true
+        };
+        _thread.Start();
     }
 
-    private async Task LoopAsync(CancellationToken token)
+    private void Loop(CancellationToken token)
     {
+        CursorInterop.EnsureInputDesktopAttached();
         long statWindowStartUs = _hub.NowUs();
         int statTicks = 0;
         double statCaptureMs = 0;
         double statComposeMs = 0;
+        long nextTickUs = _hub.NowUs();
 
         while (!token.IsCancellationRequested)
         {
-            long tickStartUs = _hub.NowUs();
-
             long captureUs = 0, composeUs = 0;
             try
             {
@@ -171,8 +187,9 @@ internal sealed class DisplayCaptureProducer : IDisposable
                 CaptureTick();
                 captureUs = _hub.NowUs() - stageStartUs;
 
+                _hub.FillSinksFor(_deviceName, _sinkScratch);
                 stageStartUs = _hub.NowUs();
-                ComposeTick();
+                ComposeTick(_sinkScratch);
                 composeUs = _hub.NowUs() - stageStartUs;
             }
             catch (Exception ex)
@@ -180,7 +197,7 @@ internal sealed class DisplayCaptureProducer : IDisposable
                 Console.WriteLine($"[Hub] {_deviceName} capture tick error: {ex.Message}");
             }
 
-            if (HasNoSubscribers())
+            if (_sinkScratch.Count == 0)
             {
                 if (++_idleTicks >= IdleTicksBeforeRetire)
                 {
@@ -194,29 +211,46 @@ internal sealed class DisplayCaptureProducer : IDisposable
                 _idleTicks = 0;
             }
 
-            int elapsedMs = (int)((_hub.NowUs() - tickStartUs) / 1000);
-            int delayMs = Math.Max(1, 16 - elapsedMs);
-            await Task.Delay(delayMs, token);
+            int maxSinkHz = 60;
+            for (int i = 0; i < _sinkScratch.Count; i++)
+            {
+                if (_sinkScratch[i].TargetFramerate > maxSinkHz) maxSinkHz = _sinkScratch[i].TargetFramerate;
+            }
+            int effectiveHz = Math.Max(_screenRefreshRate, maxSinkHz);
+            long targetIntervalUs = (long)(1_000_000.0 / effectiveHz);
+
+            nextTickUs += targetIntervalUs;
+            long nowUs = _hub.NowUs();
+            if (nowUs > nextTickUs)
+            {
+                // Overran this slot: start a fresh period instead of bursting to catch up. A
+                // steady cadence (even slightly below the target) reads smoother than catch-up
+                // judder, and the sink's drop-oldest policy already discards late frames.
+                nextTickUs = nowUs + targetIntervalUs;
+            }
+            else
+            {
+                long waitUs = nextTickUs - nowUs;
+                if (waitUs > 2000)
+                    Thread.Sleep((int)((waitUs - 1000) / 1000));
+                while (_hub.NowUs() < nextTickUs)
+                {
+                    Thread.SpinWait(8);
+                }
+            }
 
             statTicks++;
             statCaptureMs += captureUs / 1000.0;
             statComposeMs += composeUs / 1000.0;
             if ((_hub.NowUs() - statWindowStartUs) >= 3_000_000)
             {
-                var sinks = _hub.GetSinksFor(_deviceName);
-                Console.WriteLine($"[Hub] {_deviceName}: ticks={statTicks} ({statTicks / 3.0:F0}/s) capture={statCaptureMs / Math.Max(statTicks, 1):F1}ms compose={statComposeMs / Math.Max(statTicks, 1):F1}ms sinks={sinks.Count}");
+                Console.WriteLine($"[Hub] {_deviceName}: ticks={statTicks} ({statTicks / 3.0:F0}/s, target {effectiveHz}Hz) capture={statCaptureMs / Math.Max(statTicks, 1):F1}ms compose={statComposeMs / Math.Max(statTicks, 1):F1}ms sinks={_sinkScratch.Count}");
                 statWindowStartUs = _hub.NowUs();
                 statTicks = 0;
                 statCaptureMs = 0;
                 statComposeMs = 0;
             }
         }
-    }
-
-    private bool HasNoSubscribers()
-    {
-        var sinks = _hub.GetSinksFor(_deviceName);
-        return sinks.Count == 0;
     }
 
     private bool RefreshScreenIfNeeded(bool force = false)
@@ -239,6 +273,11 @@ internal sealed class DisplayCaptureProducer : IDisposable
             }
         }
 
+        var (originX, originY, _, _, hz) = CursorInterop.GetPhysicalScreenBounds(_deviceName);
+        _screenOriginX = originX;
+        _screenOriginY = originY;
+        if (hz > 0) _screenRefreshRate = hz;
+
         return _screen != null;
     }
     private void CaptureTick()
@@ -250,32 +289,23 @@ internal sealed class DisplayCaptureProducer : IDisposable
         if (_useDxgi)
         {
             captured = _dxgi.CaptureNativeFrame(_deviceName, _frame);
-            if (!captured)
-            {
-                _dxgiFailCount++;
-                if (_dxgiFailCount > DxgiFailoverThreshold)
-                {
-                    if (!_dxgiFailLogged)
-                    {
-                        Console.WriteLine($"[Hub] {_deviceName}: DXGI unavailable (access denied or unsupported) — using GDI capture");
-                        _dxgiFailLogged = true;
-                    }
-                    _useDxgi = false;
-                }
-            }
-            else
+            if (captured)
             {
                 _dxgiFailCount = 0;
 
-                // A static desktop never presents frames (DWM skips unchanged outputs), so
-                // Desktop Duplication can stay empty indefinitely — seed the bitmap via GDI
-                // every ~200ms until DXGI delivers its first real frame.
-                if (_frame.Bitmap == null && ++_dxgiNoFrameTicks >= 12)
+                if (_frame.Captured)
                 {
                     _dxgiNoFrameTicks = 0;
-                    if (_gdi.CaptureNativeFrame(_screenIndex, _frame))
+                }
+                else if (_frame.Bitmap == null)
+                {
+                    // A static desktop never presents frames (DWM skips unchanged outputs), so
+                    // Desktop Duplication can stay empty indefinitely — seed the published frame
+                    // via GDI every ~200ms until DXGI delivers its first real frame.
+                    if (++_dxgiNoFrameTicks >= 12)
                     {
-                        if (!_gdiSeedLogged)
+                        _dxgiNoFrameTicks = 0;
+                        if (AdoptGdiFrame() && !_gdiSeedLogged)
                         {
                             Console.WriteLine($"[Hub] {_deviceName}: static desktop — seeding first frame via GDI until DXGI presents");
                             _gdiSeedLogged = true;
@@ -283,20 +313,41 @@ internal sealed class DisplayCaptureProducer : IDisposable
                     }
                 }
             }
-        }
-
-        if (!_useDxgi)
-        {
-            captured = _gdi.CaptureNativeFrame(_screenIndex, _frame);
-
-            // Retry Desktop Duplication on a time basis — a just-retired producer's
-            // duplication handle or a topology flash can make DuplicateOutput fail for
-            // a few seconds (E_INVALIDARG), after which it works again.
-            if (captured && DateTime.UtcNow >= _nextDxgiRetryUtc)
+            else
             {
-                _nextDxgiRetryUtc = DateTime.UtcNow.AddSeconds(2);
-                if (_dxgi.CaptureNativeFrame(_deviceName, _frame))
+                // Instant GDI fallback on the same tick so frame delivery is seamless during
+                // mode switches/UAC. The capture lands in the scratch frame and is published
+                // only on success — the failed DXGI call never damages the served frame.
+                captured = AdoptGdiFrame();
+
+                _dxgiFailCount++;
+                if (_dxgiFailCount >= DxgiFailoverThreshold)
                 {
+                    if (!_dxgiFailLogged)
+                    {
+                        Console.WriteLine($"[Hub] {_deviceName}: DXGI unavailable (access denied or unsupported) — using GDI capture");
+                        _dxgiFailLogged = true;
+                    }
+                    _useDxgi = false;
+                    _nextDxgiRetryUtc = DateTime.UtcNow.AddSeconds(1); // fast 1s retry
+                }
+            }
+        }
+        else
+        {
+            captured = AdoptGdiFrame();
+
+            // Fast retry of Desktop Duplication (every 1s instead of 5s). The probe runs into
+            // the scratch frame: a DXGI timeout (static desktop, nothing published) must not
+            // erase the GDI frame currently being served.
+            if (DateTime.UtcNow >= _nextDxgiRetryUtc)
+            {
+                _nextDxgiRetryUtc = DateTime.UtcNow.AddSeconds(1);
+                if (_dxgi.CaptureNativeFrame(_deviceName, _gdiFrame))
+                {
+                    if (_gdiFrame.Captured)
+                        PublishFrame(_gdiFrame);
+
                     _useDxgi = true;
                     _dxgiFailCount = 0;
                     _dxgiFailLogged = false;
@@ -313,25 +364,45 @@ internal sealed class DisplayCaptureProducer : IDisposable
         }
     }
 
-    private void ComposeTick()
+    /// <summary>Captures via GDI into the scratch wrapper; publishes (swaps in) only on success.</summary>
+    private bool AdoptGdiFrame()
+    {
+        if (!_gdi.CaptureNativeFrame(_screenIndex, _gdiFrame))
+            return false;
+        PublishFrame(_gdiFrame);
+        return true;
+    }
+
+    /// <summary>
+    /// Makes <paramref name="frame"/> the published frame and recycles the previous wrapper as
+    /// scratch. Producer thread only — called between CaptureTick and ComposeTick, so no sink
+    /// observes the swap mid-compose.
+    /// </summary>
+    private void PublishFrame(NativeFrame frame)
+    {
+        var previous = _frame;
+        _frame = frame;
+        _gdiFrame = previous;
+    }
+
+    private void ComposeTick(List<ClientFrameSink> sinks)
     {
         if (_frame.Bitmap == null) return;
 
-        int screenX = _screen?.Bounds.X ?? 0;
-        int screenY = _screen?.Bounds.Y ?? 0;
+        int screenX = _screenOriginX;
+        int screenY = _screenOriginY;
         long timestampUs = _hub.NowUs();
 
-        var sinks = _hub.GetSinksFor(_deviceName);
-        foreach (var sink in sinks)
+        for (int i = 0; i < sinks.Count; i++)
         {
-            sink.TryBeginCompose(_frame, screenX, screenY, timestampUs);
+            sinks[i].TryBeginCompose(_frame, screenX, screenY, timestampUs);
         }
     }
 
     public void Dispose()
     {
         _cts?.Cancel();
-        try { _loop?.Wait(500); } catch { }
+        try { _thread?.Join(500); } catch { }
         _dxgi.Dispose();
     }
 }

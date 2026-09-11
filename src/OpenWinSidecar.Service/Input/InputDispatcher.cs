@@ -72,29 +72,115 @@ public class InputDispatcher
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int X, int Y);
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    private struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public short dmSpecVersion; public short dmDriverVersion; public short dmSize; public short dmDriverExtra;
+        public int dmFields; public int dmPositionX; public int dmPositionY; public int dmDisplayOrientation;
+        public int dmDisplayFixedOutput; public short dmColor; public short dmDuplex; public short dmYResolution;
+        public short dmTTOption; public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public short dmLogPixels; public int dmBitsPerPel; public int dmPelsWidth; public int dmPelsHeight;
+        public int dmDisplayFlags; public int dmDisplayFrequency;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Ansi)]
+    private static extern int EnumDisplaySettingsA(string? lpszDeviceName, int iModeNum, ref DEVMODE lpDevMode);
+
+    private static (int x, int y, int width, int height) GetScreenPhysicalBounds(string? deviceName, int displayIndex)
+    {
+        if (!string.IsNullOrEmpty(deviceName))
+        {
+            var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf<DEVMODE>() };
+            if (EnumDisplaySettingsA(deviceName, -1, ref dm) != 0 && dm.dmPelsWidth > 0 && dm.dmPelsHeight > 0)
+            {
+                return (dm.dmPositionX, dm.dmPositionY, dm.dmPelsWidth, dm.dmPelsHeight);
+            }
+        }
+
+        var screens = Screen.AllScreens;
+        Screen? targetScreen = null;
+
+        if (!string.IsNullOrEmpty(deviceName))
+        {
+            targetScreen = screens.FirstOrDefault(s => string.Equals(s.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (targetScreen == null)
+        {
+            if (displayIndex >= 0 && displayIndex < screens.Length)
+                targetScreen = screens[displayIndex];
+            else
+                targetScreen = screens.Length > 1 ? screens[1] : screens[0];
+        }
+
+        if (targetScreen != null)
+        {
+            var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf<DEVMODE>() };
+            if (EnumDisplaySettingsA(targetScreen.DeviceName, -1, ref dm) != 0 && dm.dmPelsWidth > 0 && dm.dmPelsHeight > 0)
+            {
+                return (dm.dmPositionX, dm.dmPositionY, dm.dmPelsWidth, dm.dmPelsHeight);
+            }
+            return (targetScreen.Bounds.X, targetScreen.Bounds.Y, targetScreen.Bounds.Width, targetScreen.Bounds.Height);
+        }
+
+        return (0, 0, 1920, 1080);
+    }
+
+    private int _lastPixelX;
+    private int _lastPixelY;
+
     public void MoveMouseToScreen(int displayIndex, double normalizedX, double normalizedY, double zoom = 1.0)
     {
-        var screens = Screen.AllScreens;
-        Rectangle bounds;
-        if (displayIndex >= 0 && displayIndex < screens.Length)
-        {
-            bounds = screens[displayIndex].Bounds;
-        }
-        else
-        {
-            bounds = screens.Length > 1 ? screens[1].Bounds : screens[0].Bounds;
-        }
+        MoveMouseToScreen(null, displayIndex, normalizedX, normalizedY, zoom);
+    }
+
+    public void MoveMouseToScreen(string? deviceName, int displayIndex, double normalizedX, double normalizedY, double zoom = 1.0)
+    {
+        var (originX, originY, width, height) = GetScreenPhysicalBounds(deviceName, displayIndex);
 
         double z = Math.Clamp(zoom, 1.0, 3.0);
-        int activeW = (int)(bounds.Width / z);
-        int activeH = (int)(bounds.Height / z);
+        int activeW = Math.Min(width, (int)(width / z));
+        int activeH = Math.Min(height, (int)(height / z));
 
-        // Calculate exact absolute desktop pixel coordinates with zoom magnification
-        int pixelX = bounds.X + (int)(Math.Clamp(normalizedX, 0.0, 1.0) * activeW);
-        int pixelY = bounds.Y + (int)(Math.Clamp(normalizedY, 0.0, 1.0) * activeH);
+        // Center crop offset matching ClientFrameSink.cs
+        int cropX = (width - activeW) / 2;
+        int cropY = (height - activeH) / 2;
 
-        // SetCursorPos provides zero-rounding, pixel-perfect cursor positioning
-        SetCursorPos(pixelX, pixelY);
+        // Calculate exact absolute desktop pixel coordinates with zoom magnification and crop centering
+        int pixelX = originX + cropX + (int)Math.Round(Math.Clamp(normalizedX, 0.0, 1.0) * activeW);
+        int pixelY = originY + cropY + (int)Math.Round(Math.Clamp(normalizedY, 0.0, 1.0) * activeH);
+
+        _lastPixelX = pixelX;
+        _lastPixelY = pixelY;
+
+        // 1. Primary multi-monitor pointer event injection via SendInput with MOUSEEVENTF_VIRTUALDESK
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        if (vw > 1 && vh > 1)
+        {
+            int absX = (int)Math.Round((pixelX - vx) * 65535.0 / (vw - 1));
+            int absY = (int)Math.Round((pixelY - vy) * 65535.0 / (vh - 1));
+
+            var input = new INPUT
+            {
+                type = INPUT_MOUSE,
+                u = new INPUT_UNION
+                {
+                    mi = new MOUSEINPUT
+                    {
+                        dx = absX,
+                        dy = absY,
+                        dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+                    }
+                }
+            };
+            SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        }
     }
 
     public void MouseClick(bool left, bool down)
@@ -103,12 +189,25 @@ public class InputDispatcher
             ? (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP)
             : (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP);
 
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        int absX = vw > 1 ? (int)Math.Round((_lastPixelX - vx) * 65535.0 / (vw - 1)) : 0;
+        int absY = vh > 1 ? (int)Math.Round((_lastPixelY - vy) * 65535.0 / (vh - 1)) : 0;
+
         var input = new INPUT
         {
             type = INPUT_MOUSE,
             u = new INPUT_UNION
             {
-                mi = new MOUSEINPUT { dwFlags = flag }
+                mi = new MOUSEINPUT
+                {
+                    dx = absX,
+                    dy = absY,
+                    dwFlags = flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+                }
             }
         };
 

@@ -31,7 +31,7 @@ int normAbsY = (int)(((double)(pixelY - vY) / vH) * 65535.0);
 
 ---
 
-## 3. Gestures & Client Interaction (`SpacedeskTcpServer.cs`)
+## 3. Gestures & Client Interaction (`SidecarTcpServer.cs`)
 
 The HTML5 canvas viewer captures raw touch and pointer events and translates them to protocol commands:
 

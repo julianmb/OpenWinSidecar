@@ -1,0 +1,24 @@
+name: Build iOS Companion App
+
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile Swift Package App
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build Swift Package App
+        run: |
+          cd ios/OpenWinSidecarClient
+          swift build -v

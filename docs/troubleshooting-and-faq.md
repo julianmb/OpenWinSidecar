@@ -13,7 +13,7 @@ The client connects, but the canvas remains black or solid dark gray.
    - `IDXGIOutputDuplication` returns `E_ACCESSDENIED (0x80070005)` if the process is un-elevated.
    - *Fix*: Run the service via [`run_service_admin.bat`](../run_service_admin.bat) (Run as Administrator) or click **🛡️ Start Elevated** in the Console.
 3. **Display Mode in Disconnected State**:
-   - In `OpenWinSidecar.Console`, click **⚡ 3rd Screen ON** or press `Win + P` and select **Extend**.
+   - In `OpenWinSidecar`, click **⚡ 3rd Screen ON** or press `Win + P` and select **Extend**.
 
 ---
 
@@ -45,7 +45,7 @@ You see two mouse cursors moving on top of each other on your iPad/client browse
 *How do I turn off the 3rd screen so my cursor and windows don't get lost in an invisible monitor?*
 
 ### Answer:
-- In `OpenWinSidecar.Console`, click **🔌 3rd Screen OFF** (or via CLI: `openwinsidecar screen off`).
+- In `OpenWinSidecar`, click **🔌 3rd Screen OFF** (or via CLI: `openwinsidecar screen off`).
 - This disables the device node (`ROOT\DISPLAY\0000`), causing Windows to immediately snap all open application windows back to your primary display and stop the streaming service.
 
 ---
@@ -53,7 +53,7 @@ You see two mouse cursors moving on top of each other on your iPad/client browse
 ## 5. Virtual Display Driver Reset
 
 If the virtual monitor stops responding:
-1. Open `OpenWinSidecar.Console`.
+1. Open `OpenWinSidecar`.
 2. Click **🔄 Restart Driver & Stream** (or via CLI: `openwinsidecar driver restart`).
 3. The system executes `pnputil.exe /restart-device "ROOT\DISPLAY\0000"` and calls `SetDisplayConfig` to re-extend all displays.
 

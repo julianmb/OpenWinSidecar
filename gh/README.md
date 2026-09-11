@@ -45,8 +45,8 @@ dotnet build OpenWinSidecar.slnx
 # 1. Install the virtual display driver (once; admin)
 #    drivers/VDD/install_driver.bat
 
-# 2. Start the console (installs the tray app, manages everything)
-dotnet run --project src/OpenWinSidecar.Console
+# 2. Start the app (installs the tray app, manages everything)
+dotnet run --project src/OpenWinSidecar
 ```
 
 Then on the iPad: **scan the QR code** shown in the console (or open `http://<your-pc-ip>:8080` in Safari) → Share → **Add to Home Screen** for a borderless fullscreen experience. Windows now has an extra display in Settings, and the iPad shows it — move windows onto it like any monitor.
@@ -106,7 +106,7 @@ Latency is dominated by network + display pipeline; on a healthy Wi-Fi network t
 src/
   OpenWinSidecar.Core      # display/driver/services management, Win32 interop
   OpenWinSidecar.Service   # capture, encoding, WebSocket server, web client
-  OpenWinSidecar.Console   # WPF management app + tray + QR connect
+  OpenWinSidecar           # WPF management app + tray + QR connect
   OpenWinSidecar.Cli       # command-line management
 drivers/VDD/               # virtual display driver package (IddCx)
 docs/                      # architecture, protocols, troubleshooting

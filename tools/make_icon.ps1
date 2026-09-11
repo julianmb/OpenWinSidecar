@@ -1,4 +1,4 @@
-param([string]$OutPath = "C:\Users\JulianB\source\repos\OpenSpacedesk\src\OpenWinSidecar.Console\app.ico")
+param([string]$OutPath = "$PSScriptRoot\..\src\OpenWinSidecar\app.ico")
 
 Add-Type -AssemblyName System.Drawing
 

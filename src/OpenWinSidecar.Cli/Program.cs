@@ -1,7 +1,7 @@
 using OpenWinSidecar.Core.Models;
 using OpenWinSidecar.Core.Services;
 
-var manager = new SpacedeskManager();
+var manager = new SidecarManager();
 await manager.RefreshStateAsync();
 
 if (args.Length == 0)
@@ -114,13 +114,13 @@ static void PrintUsage()
     Console.WriteLine();
 }
 
-static async Task ShowStatusAsync(SpacedeskManager manager)
+static async Task ShowStatusAsync(SidecarManager manager)
 {
     await manager.RefreshStateAsync();
     PrintHeader();
 
     Console.Write("Streaming Service: ");
-    if (manager.CurrentServiceState == SpacedeskServiceState.Running)
+    if (manager.CurrentServiceState == SidecarServiceState.Running)
     {
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("[ RUNNING ]");
@@ -167,7 +167,7 @@ static async Task ShowStatusAsync(SpacedeskManager manager)
     Console.WriteLine();
 }
 
-static void Enable3rdScreen(SpacedeskManager manager)
+static void Enable3rdScreen(SidecarManager manager)
 {
     Console.WriteLine("Enabling Virtual 3rd Screen driver and starting streaming service...");
     var (ok, msg) = manager.EnableVirtualDisplayAndStartService();
@@ -184,7 +184,7 @@ static void Enable3rdScreen(SpacedeskManager manager)
     Console.ResetColor();
 }
 
-static void Disable3rdScreen(SpacedeskManager manager)
+static void Disable3rdScreen(SidecarManager manager)
 {
     Console.WriteLine("Disabling Virtual 3rd Screen driver and stopping streaming service...");
     var (ok, msg) = manager.DisableVirtualDisplayAndStopService();
@@ -193,7 +193,7 @@ static void Disable3rdScreen(SpacedeskManager manager)
     Console.ResetColor();
 }
 
-static void CompleteShutdown(SpacedeskManager manager)
+static void CompleteShutdown(SidecarManager manager)
 {
     Console.WriteLine("Performing complete shutdown of streaming service and virtual display driver...");
     var (ok, msg) = manager.CompleteShutdown();
@@ -219,7 +219,7 @@ static void RestartDriver()
     Console.ResetColor();
 }
 
-static async Task StartServiceAsync(SpacedeskManager manager)
+static async Task StartServiceAsync(SidecarManager manager)
 {
     Console.WriteLine("Starting OpenWinSidecar service...");
     var (started, msg) = manager.ProcessManager.StartInteractive();
@@ -236,7 +236,7 @@ static async Task StartServiceAsync(SpacedeskManager manager)
     Console.ResetColor();
 }
 
-static async Task StopServiceAsync(SpacedeskManager manager)
+static async Task StopServiceAsync(SidecarManager manager)
 {
     Console.WriteLine("Stopping OpenWinSidecar service...");
     var ok = await manager.ServiceController.StopServiceAsync();
@@ -253,7 +253,7 @@ static async Task StopServiceAsync(SpacedeskManager manager)
     Console.ResetColor();
 }
 
-static async Task RestartServiceAsync(SpacedeskManager manager)
+static async Task RestartServiceAsync(SidecarManager manager)
 {
     Console.WriteLine("Restarting OpenWinSidecar service...");
     var ok = await manager.ServiceController.RestartServiceAsync();
@@ -270,7 +270,7 @@ static async Task RestartServiceAsync(SpacedeskManager manager)
     Console.ResetColor();
 }
 
-static void ShowClients(SpacedeskManager manager)
+static void ShowClients(SidecarManager manager)
 {
     PrintHeader();
     Console.WriteLine($"Total Known Clients: {manager.Clients.Count}");
@@ -295,7 +295,7 @@ static void ShowClients(SpacedeskManager manager)
     }
 }
 
-static void ShowNetwork(SpacedeskManager manager)
+static void ShowNetwork(SidecarManager manager)
 {
     PrintHeader();
     Console.WriteLine("Active Network Interfaces:\n");
@@ -310,7 +310,7 @@ static void ShowNetwork(SpacedeskManager manager)
     }
 }
 
-static async Task HandleConfigAsync(SpacedeskManager manager, string[] args)
+static async Task HandleConfigAsync(SidecarManager manager, string[] args)
 {
     var settings = manager.RegistryManager.GetSettings();
 

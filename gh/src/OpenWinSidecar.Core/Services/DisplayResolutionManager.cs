@@ -58,6 +58,9 @@ public class DisplayResolutionManager
         public string DeviceKey;
     }
 
+    private const int DM_POSITION = 0x00000020;
+    private const int CDS_NORESET = 0x10000000;
+
     [DllImport("user32.dll")]
     private static extern int EnumDisplaySettings(string? deviceName, int modeNum, ref DEVMODE devMode);
 
@@ -66,6 +69,18 @@ public class DisplayResolutionManager
 
     [DllImport("user32.dll")]
     private static extern int ChangeDisplaySettingsEx(string? lpszDeviceName, ref DEVMODE lpDevMode, IntPtr hwnd, uint dwflags, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern int ChangeDisplaySettingsEx(string? lpszDeviceName, IntPtr lpDevMode, IntPtr hwnd, uint dwflags, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool CloseDesktop(IntPtr hDesktop);
 
     public static List<DisplayMonitorInfo> GetAllMonitorsDetailed()
     {
@@ -169,7 +184,7 @@ public class DisplayResolutionManager
     /// nothing happens — repeated set_res messages cannot cause mode-change churn.
     /// Returns the applied mode, or null when no virtual display/mode was available.
     /// </summary>
-    public static DisplayModeInfo? MatchVirtualDisplayToClient(int clientWidth, int clientHeight)
+    public static DisplayModeInfo? MatchVirtualDisplayToClient(int clientWidth, int clientHeight, int targetRefreshRate = 0)
     {
         try
         {
@@ -179,26 +194,31 @@ public class DisplayResolutionManager
             if (virtualMonitor == null || virtualMonitor.SupportedModes.Count == 0) return null;
 
             double clientAspect = (double)clientWidth / clientHeight;
-            double currentAspect = (double)virtualMonitor.Width / virtualMonitor.Height;
 
-            // Already matched — no mode change (avoids churn from repeated syncs)
-            if (Math.Abs(currentAspect - clientAspect) / clientAspect <= 0.005)
-                return new DisplayModeInfo { Width = virtualMonitor.Width, Height = virtualMonitor.Height, RefreshRate = virtualMonitor.RefreshRate };
-
-            // Best supported mode: closest aspect, then the largest area (sharpest at 2x-class)
+            // Pick the best supported mode matching aspect ratio, preferring requested refresh rate, then native resolution
             var best = virtualMonitor.SupportedModes
                 .OrderBy(m => Math.Abs((double)m.Width / m.Height - clientAspect) / clientAspect)
+                .ThenBy(m => targetRefreshRate > 0 ? Math.Abs(m.RefreshRate - targetRefreshRate) : 0)
                 .ThenByDescending(m => m.Width * m.Height)
-                .First();
+                .ThenByDescending(m => m.RefreshRate)
+                .FirstOrDefault();
 
-            double bestAspect = (double)best.Width / best.Height;
-            // Only switch when it meaningfully improves the aspect match
-            if (Math.Abs(bestAspect - clientAspect) / clientAspect >= Math.Abs(currentAspect - clientAspect) / clientAspect)
-                return null;
+            if (best == null) return null;
+
+            if (virtualMonitor.Width == best.Width && virtualMonitor.Height == best.Height &&
+                (targetRefreshRate <= 0 || virtualMonitor.RefreshRate == best.RefreshRate))
+            {
+                return new DisplayModeInfo
+                {
+                    Width = virtualMonitor.Width,
+                    Height = virtualMonitor.Height,
+                    RefreshRate = virtualMonitor.RefreshRate
+                };
+            }
 
             if (SetDisplayResolution(virtualMonitor.DeviceName, best.Width, best.Height, best.RefreshRate))
             {
-                Console.WriteLine($"[DisplayManager] Virtual display matched to client aspect: {best.Width}x{best.Height} @ {best.RefreshRate}Hz (client {clientWidth}x{clientHeight})");
+                Console.WriteLine($"[DisplayManager] Virtual display matched to client: {best.Width}x{best.Height} @ {best.RefreshRate}Hz (client {clientWidth}x{clientHeight})");
                 return best;
             }
         }
@@ -213,11 +233,30 @@ public class DisplayResolutionManager
     {
         try
         {
+            // Ensure thread is attached to input desktop without closing the desktop handle
+            try
+            {
+                IntPtr hDesk = OpenInputDesktop(0, false, 0x01FF);
+                if (hDesk != IntPtr.Zero)
+                {
+                    SetThreadDesktop(hDesk);
+                }
+            }
+            catch { }
+
             var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf<DEVMODE>() };
 
             if (EnumDisplaySettings(deviceName, ENUM_CURRENT_SETTINGS, ref dm) == 0)
             {
                 if (EnumDisplaySettings(deviceName, 0, ref dm) == 0) return false;
+            }
+
+            // If the monitor is already at the requested resolution and refresh rate, return success (idempotent)
+            if (dm.dmPelsWidth == targetWidth && dm.dmPelsHeight == targetHeight &&
+                (refreshRate <= 0 || dm.dmDisplayFrequency == refreshRate))
+            {
+                Console.WriteLine($"[DisplayManager] {deviceName} is already at {targetWidth}x{targetHeight} @ {dm.dmDisplayFrequency}Hz");
+                return true;
             }
 
             dm.dmPelsWidth = targetWidth;
@@ -230,12 +269,46 @@ public class DisplayResolutionManager
                 dm.dmFields |= DM_DISPLAYFREQUENCY;
             }
 
+            // Attempt 1: Direct update registry without position change
             int res = ChangeDisplaySettingsEx(deviceName, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY, IntPtr.Zero);
             if (res == DISP_CHANGE_SUCCESSFUL)
             {
                 Console.WriteLine($"[DisplayManager] Changed {deviceName} resolution to {targetWidth}x{targetHeight} @ {refreshRate}Hz");
                 return true;
             }
+
+            // Attempt 2: Multi-monitor two-step commit (CDS_UPDATEREGISTRY | CDS_NORESET, then global commit)
+            res = ChangeDisplaySettingsEx(deviceName, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY | CDS_NORESET, IntPtr.Zero);
+            if (res == DISP_CHANGE_SUCCESSFUL)
+            {
+                ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+                Console.WriteLine($"[DisplayManager] Changed {deviceName} resolution (two-step) to {targetWidth}x{targetHeight} @ {refreshRate}Hz");
+                return true;
+            }
+
+            // Attempt 3: Multi-monitor position-adjusted two-step commit if monitor has negative offset
+            if (dm.dmPositionX < 0)
+            {
+                dm.dmPositionX = -targetWidth;
+                dm.dmFields |= DM_POSITION;
+                res = ChangeDisplaySettingsEx(deviceName, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY | CDS_NORESET, IntPtr.Zero);
+                if (res == DISP_CHANGE_SUCCESSFUL)
+                {
+                    ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+                    Console.WriteLine($"[DisplayManager] Changed {deviceName} resolution (position-adjusted) to {targetWidth}x{targetHeight} @ {refreshRate}Hz");
+                    return true;
+                }
+            }
+
+            // Attempt 4: Dynamic on-the-fly change without updating registry
+            res = ChangeDisplaySettingsEx(deviceName, ref dm, IntPtr.Zero, 0, IntPtr.Zero);
+            if (res == DISP_CHANGE_SUCCESSFUL)
+            {
+                Console.WriteLine($"[DisplayManager] Changed {deviceName} resolution (dynamic) to {targetWidth}x{targetHeight} @ {refreshRate}Hz");
+                return true;
+            }
+
+            Console.WriteLine($"[DisplayManager] ChangeDisplaySettingsEx returned {res} for {deviceName} {targetWidth}x{targetHeight} @ {refreshRate}Hz");
         }
         catch (Exception ex)
         {

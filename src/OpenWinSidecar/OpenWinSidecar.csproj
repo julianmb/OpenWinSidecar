@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.4.3" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
+    <ProjectReference Include="..\OpenWinSidecar.Core\OpenWinSidecar.Core.csproj" />
+    <ProjectReference Include="..\OpenWinSidecar.Service\OpenWinSidecar.Service.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="app.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>OpenWinSidecar</AssemblyName>
+    <RootNamespace>OpenWinSidecar</RootNamespace>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+</Project>

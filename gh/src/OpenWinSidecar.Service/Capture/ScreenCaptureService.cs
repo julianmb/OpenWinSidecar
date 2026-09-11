@@ -337,11 +337,10 @@ public class ScreenCaptureService
             srcHeight = 1640;
         }
 
-        // Capped working resolution (even-aligned), aspect-preserving
-        int width = Math.Min(srcWidth, 1180);
-        width = (width / 2) * 2;
-        int height = (int)Math.Round((double)width * srcHeight / srcWidth);
-        height = (height / 2) * 2;
+        // Native working resolution (even-aligned), aspect-preserving
+        int width = (srcWidth / 2) * 2;
+        int height = (srcHeight / 2) * 2;
+        if (width < 2) width = 2;
         if (height < 2) height = 2;
 
         CursorInterop.FillFrameCursor(frame);
@@ -404,8 +403,11 @@ public class ScreenCaptureService
             }
 
             frame.Bitmap = _nativeBitmap;
+            frame.RawBuffer = null;
             frame.Width = width;
             frame.Height = height;
+            frame.FullFrame = true;
+            frame.DirtyRects.Clear();
             frame.Captured = true;
             return true;
         }

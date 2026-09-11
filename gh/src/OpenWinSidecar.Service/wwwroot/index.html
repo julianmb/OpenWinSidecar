@@ -1,0 +1,1855 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'>
+    <meta name='apple-mobile-web-app-capable' content='yes'>
+    <meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>
+    <meta name='apple-mobile-web-app-title' content='OpenWinSidecar'>
+    <meta name='mobile-web-app-capable' content='yes'>
+    <meta name='theme-color' content='#000000'>
+    <link rel='apple-touch-icon' sizes='180x180' href='/apple-touch-icon.png'>
+    <link rel='icon' type='image/png' sizes='32x32' href='/apple-touch-icon.png'>
+    <link rel='manifest' href='/manifest.json'>
+    <title>OpenWinSidecar Display</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            background: #000;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            cursor: default;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            transform: translateZ(0);
+            -webkit-transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            perspective: 1000px;
+            will-change: transform;
+            cursor: none;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            cursor: none;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: pixelated;
+            transform: translateZ(0);
+            -webkit-transform: translate3d(0, 0, 0);
+            will-change: transform;
+        }
+        #pointer-dot {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: rgba(59, 130, 246, 0.9);
+            border: 2px solid #FFFFFF;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.8);
+            pointer-events: none;
+            top: 0;
+            left: 0;
+            margin: -7px 0 0 -7px;
+            display: none;
+            z-index: 15;
+            will-change: transform;
+        }
+        #top-pill {
+            position: absolute;
+            top: env(safe-area-inset-top, 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(14, 14, 18, 0.65);
+            color: rgba(255, 255, 255, 0.9);
+            padding: 2px 10px;
+            height: 22px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 500;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Mono', monospace;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+            z-index: 50;
+            cursor: pointer;
+            opacity: 0.8;
+            transition: opacity 0.3s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s;
+        }
+        #top-pill.dimmed {
+            opacity: 0.2;
+        }
+        #top-pill:hover, #top-pill:active {
+            opacity: 0.95 !important;
+            transform: translateX(-50%) scale(1.05);
+            background: rgba(22, 22, 28, 0.92);
+            border-color: rgba(96, 165, 250, 0.5);
+        }
+        /* State colors on the blue/yellow axis (readable under red-green color-vision
+           deficiencies); every state is also distinguishable by shape or text alone. */
+        .dot { width: 5px; height: 5px; background: #60A5FA; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+        .gear { font-size: 11px; opacity: 0.75; line-height: 1; }
+
+        .pwa-toast {
+            position: fixed;
+            top: env(safe-area-inset-top, 14px);
+            right: 16px;
+            width: calc(100vw - 32px);
+            max-width: 340px;
+            background: rgba(20, 20, 26, 0.96);
+            border: 1px solid rgba(96, 165, 250, 0.4);
+            border-radius: 18px;
+            padding: 14px 16px;
+            color: #fff;
+            box-shadow: 0 10px 32px rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 60;
+            animation: fadeIn 0.3s ease;
+        }
+        .pwa-toast-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        .pwa-toast-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #93C5FD;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .pwa-toast-close {
+            background: none !important; border: none !important;
+            color: rgba(255,255,255,0.6) !important;
+            font-size: 15px; cursor: pointer; padding: 0 4px; width: auto !important;
+        }
+        .pwa-toast-desc {
+            font-size: 12px; line-height: 1.4; color: rgba(255,255,255,0.85);
+        }
+        .pwa-toast-actions {
+            display: flex; gap: 8px; margin-top: 10px;
+        }
+        .pwa-toast-actions button {
+            padding: 6px 12px; font-size: 11.5px; border-radius: 10px; width: auto; font-weight: 600;
+        }
+        .pwa-toast-guide-btn {
+            background: #2563EB !important; border: 1px solid #3B82F6 !important; color: #fff !important;
+        }
+        .pwa-toast-dismiss-btn {
+            background: rgba(255,255,255,0.08) !important; border: 1px solid rgba(255,255,255,0.15) !important; color: rgba(255,255,255,0.7) !important;
+        }
+        .pwa-banner-card {
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.22), rgba(20, 20, 28, 0.85));
+            border: 1px solid rgba(96, 165, 250, 0.35);
+            border-radius: 16px;
+            padding: 12px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: left;
+            margin-bottom: 8px;
+        }
+        .pwa-banner-card:active { transform: scale(0.98); }
+        #pwa-help-modal {
+            position: fixed; inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: none; align-items: center; justify-content: center;
+            z-index: 110;
+        }
+        #pwa-help-modal.active { display: flex; }
+        
+        select, button {
+            background: rgba(30, 30, 38, 0.9);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+        }
+        button.action-btn {
+            background: #3B82F6;
+            border-color: #60A5FA;
+        }
+        #settings-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            animation: fadeIn 0.2s ease-out;
+        }
+        #settings-modal.active {
+            display: flex;
+        }
+        .modal-card {
+            width: 90%;
+            max-width: 440px;
+            background: rgba(22, 22, 28, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85);
+            color: #fff;
+            animation: popIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .modal-close {
+            background: rgba(255, 255, 255, 0.12);
+            border: none;
+            color: #fff;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-body {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .setting-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .setting-group label {
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        details.advanced {
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            padding-top: 12px;
+            margin-top: 4px;
+        }
+        details.advanced summary {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            padding: 4px 0 10px;
+            list-style: none;
+        }
+        details.advanced summary::before {
+            content: '› ';
+            display: inline-block;
+            transition: transform 0.15s ease;
+        }
+        details.advanced[open] summary::before {
+            transform: rotate(90deg);
+        }
+        details.advanced .setting-group + .setting-group {
+            margin-top: 12px;
+        }
+        .btn-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .btn-grid button {
+            padding: 10px 8px;
+            font-size: 12px;
+        }
+        .modal-footer {
+            margin-top: 18px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .done-btn {
+            background: #3B82F6;
+            border-color: #60A5FA;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 700;
+            border-radius: 14px;
+            width: 100%;
+        }
+        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } 100% { opacity: 1; transform: scale(1); } }
+        #auth-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.78);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            display: none; align-items: center; justify-content: center;
+            z-index: 200;
+        }
+        #auth-overlay.active { display: flex; }
+        .auth-card {
+            width: 84%; max-width: 360px;
+            background: rgba(22,22,28,0.97);
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 20px; padding: 28px 24px;
+            text-align: center; color: #fff;
+        }
+        .auth-title { font-size: 15px; font-weight: 700; margin: 10px 0 16px; }
+        #auth-input {
+            width: 100%; box-sizing: border-box;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 12px; padding: 12px 14px;
+            font-size: 15px; color: #fff; text-align: center; outline: none;
+        }
+        #auth-input:focus { border-color: #3B82F6; }
+        #auth-error { min-height: 16px; font-size: 12px; color: #F2C94C; margin-top: 8px; }
+        .auth-btn {
+            width: 100%; margin-top: 10px;
+            background: #3B82F6; border: none; border-radius: 12px;
+            padding: 12px; font-size: 14px; font-weight: 700; color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div id='container'>
+        <div id='top-pill' onclick='toggleSettingsModal()'>
+            <span class='dot'></span>
+            <span id='fps'>— FPS</span>
+            <span id='lat' style='opacity:0.7;'></span>
+            <span class='gear'>⚙</span>
+        </div>
+
+        <div id='settings-modal' onclick='onModalBackdropClick(event)'>
+            <div class='modal-card' onclick='event.stopPropagation()'>
+                    <div class='modal-header'>
+                        <div style='display:flex;align-items:center;gap:8px;'>
+                            <span style='font-size:16px;font-weight:700;'>Settings</span>
+                        </div>
+                        <button class='modal-close' onclick='closeSettingsModal()'>✕</button>
+                    </div>
+
+                <div class='modal-body'>
+                    <div class='pwa-banner-card' onclick='openPwaHelpModal()'>
+                        <div style='display:flex;align-items:center;gap:10px;'>
+                            <span style='font-size:20px;'>📱</span>
+                            <div>
+                                <div style='font-weight:700;font-size:12.5px;color:#93C5FD;'>Full-Screen iPad App Mode</div>
+                                <div style='font-size:11px;color:rgba(255,255,255,0.7);margin-top:1px;'>Add to Home Screen removes the Safari bar & top close button</div>
+                            </div>
+                        </div>
+                        <span style='font-size:16px;color:rgba(255,255,255,0.6);'>›</span>
+                    </div>
+
+                    <div class='setting-group'>
+                        <label>Display</label>
+                        <select id='display-select' onchange='changeDisplay(this.value)'>
+                            <!--DISPLAY_OPTIONS-->
+                        </select>
+                    </div>
+
+                    <div class='setting-group'>
+                        <label>Quality</label>
+                        <select id='quality-select' onchange='changeQuality(this.value)'>
+                            <option value='50'>50% — fastest</option>
+                            <option value='65'>65% — balanced</option>
+                            <option value='80' selected>80% — high detail</option>
+                            <option value='90'>90% — ultra crisp</option>
+                        </select>
+                    </div>
+
+                    <div class='setting-group'>
+                        <label>Cursor</label>
+                        <select id='cursor-select' onchange='changeCursorMode(this.value)'>
+                            <option value='host' selected>Streamed Windows cursor</option>
+                            <option value='touch'>Hidden (touch mode)</option>
+                            <option value='client'>Browser cursor</option>
+                        </select>
+                    </div>
+
+                    <div class='setting-group'>
+                        <label>Actions</label>
+                        <div class='btn-grid'>
+                            <button class='action-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
+                            <button id='kbd-btn' onclick='toggleVirtualKeyboard()'>⌨ Keyboard</button>
+                        </div>
+                    </div>
+
+                    <details class='advanced'>
+                        <summary>More options</summary>
+                        <div class='setting-group'>
+                            <label>Video codec</label>
+                            <select id='codec-select' onchange='changeCodec(this.value)'>
+                                <option value='hevc' selected>HEVC / H.265 (hardware)</option>
+                                <option value='intra'>Intra JPEG (fallback)</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Color depth</label>
+                            <select id='depth-select' onchange='changeDepth(this.value)'>
+                                <option value='8' selected>8-bit — compatible</option>
+                                <option value='10'>10-bit — smoother gradients</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Resolution</label>
+                            <select id='res-select' onchange='changeResolutionPreset(this.value)'>
+                                <optgroup label='iPad 10.9-inch / 11-inch Air / 10th-11th Gen'>
+                                    <option value='2360x1640' selected>2360 x 1640 — native (recommended)</option>
+                                    <option value='2360x1640@120'>2360 x 1640 @ 120Hz ProMotion</option>
+                                    <option value='1180x820'>1180 x 820 — @2x logical</option>
+                                    <option value='1180x820@120'>1180 x 820 @ 120Hz ProMotion</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 11-inch (M4)'>
+                                    <option value='2420x1668'>2420 x 1668 — native</option>
+                                    <option value='2420x1668@120'>2420 x 1668 @ 120Hz ProMotion</option>
+                                    <option value='1210x834'>1210 x 834 — @2x logical</option>
+                                    <option value='1210x834@120'>1210 x 834 @ 120Hz ProMotion</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 11-inch (1st–4th Gen)'>
+                                    <option value='2388x1668'>2388 x 1668 — native</option>
+                                    <option value='2388x1668@120'>2388 x 1668 @ 120Hz ProMotion</option>
+                                    <option value='1194x834'>1194 x 834 — @2x logical</option>
+                                    <option value='1194x834@120'>1194 x 834 @ 120Hz ProMotion</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 13-inch (M4)'>
+                                    <option value='2752x2064'>2752 x 2064 — native</option>
+                                    <option value='2752x2064@120'>2752 x 2064 @ 120Hz ProMotion</option>
+                                    <option value='1376x1032'>1376 x 1032 — @2x logical</option>
+                                </optgroup>
+                                <optgroup label='iPad Pro 12.9-inch / Air 13-inch'>
+                                    <option value='2732x2048'>2732 x 2048 — native</option>
+                                    <option value='2732x2048@120'>2732 x 2048 @ 120Hz ProMotion</option>
+                                    <option value='1366x1024'>1366 x 1024 — @2x logical</option>
+                                </optgroup>
+                                <optgroup label='iPad 10.2-inch (7th–9th Gen)'>
+                                    <option value='2160x1620'>2160 x 1620 — native</option>
+                                    <option value='1080x810'>1080 x 810 — @2x logical</option>
+                                </optgroup>
+                                <optgroup label='iPad 9.7-inch & iPad mini Retina'>
+                                    <option value='2048x1536'>2048 x 1536 — native</option>
+                                    <option value='1024x768'>1024 x 768 — @2x logical</option>
+                                </optgroup>
+                                <optgroup label='iPad mini 8.3-inch (6th Gen & A17 Pro)'>
+                                    <option value='2266x1488'>2266 x 1488 — native</option>
+                                    <option value='1133x744'>1133 x 744 — @2x logical</option>
+                                </optgroup>
+                                <optgroup label='PC Standard'>
+                                    <option value='1920x1080'>1920 x 1080 — Full HD</option>
+                                    <option value='2560x1440'>2560 x 1440 — QHD</option>
+                                </optgroup>
+                                <option value='auto'>Auto-detect screen size</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Windows display scale</label>
+                            <select id='dpi-select' onchange='changeDpi(this.value)'>
+                                <option value='100'>100% — native</option>
+                                <option value='125'>125%</option>
+                                <option value='150'>150%</option>
+                                <option value='175' selected>175% — recommended</option>
+                                <option value='200'>200%</option>
+                                <option value='225'>225%</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>UI magnification</label>
+                            <select id='zoom-select' onchange='changeZoom(this.value)'>
+                                <option value='1.0' selected>1.0x — full desktop</option>
+                                <option value='1.25'>1.25x</option>
+                                <option value='1.5'>1.5x</option>
+                                <option value='1.75'>1.75x</option>
+                                <option value='2.0'>2.0x</option>
+                            </select>
+                        </div>
+
+                        <div class='setting-group'>
+                            <label>Aspect</label>
+                            <div class='btn-grid'>
+                                <button id='fit-btn' onclick='toggleFitMode()'>📐 Fit / Stretch</button>
+                            </div>
+                        </div>
+
+                        <div class='setting-group' style='margin-top: 14px;'>
+                            <label>Native iPad Companion App</label>
+                            <a href='/OpenWinSidecar.swiftpm.zip' download style='display:flex;align-items:center;justify-content:center;gap:8px;text-align:center;text-decoration:none;background:#2563EB;color:#fff;padding:12px 16px;border-radius:12px;font-weight:700;font-size:13px;'>
+                                <span>📲</span><span>Download iPad App (.swiftpm)</span>
+                            </a>
+                            <div style='font-size:11px;color:rgba(255,255,255,0.55);line-height:1.4;margin-top:4px;'>
+                                Opens directly in Apple's free <b>Swift Playgrounds</b> app on your iPad. No Mac required!
+                            </div>
+                        </div>
+                    </details>
+                </div>
+
+                <div class='modal-footer'>
+                    <button class='done-btn' onclick='closeSettingsModal()'>Done</button>
+                </div>
+            </div>
+        </div>
+
+        <div id='auth-overlay' onclick='onAuthBackdropClick(event)'>
+            <div class='auth-card'>
+                <div style='font-size:34px;'>🔒</div>
+                <div class='auth-title'>This screen is password protected</div>
+                <input id='auth-input' type='password' placeholder='Password' autocomplete='off'>
+                <div id='auth-error'></div>
+                <button class='auth-btn' onclick='submitAuth()'>Watch screen</button>
+            </div>
+        </div>
+
+        <div id='pwa-toast' class='pwa-toast' style='display:none;'>
+            <div class='pwa-toast-header'>
+                <div class='pwa-toast-title'>
+                    <span>📲</span>
+                    <span>True Fullscreen on iPad</span>
+                </div>
+                <button class='pwa-toast-close' onclick='dismissPwaToast(false)'>✕</button>
+            </div>
+            <div class='pwa-toast-desc'>
+                Add this page to your Home Screen to remove Safari's browser bar and get rid of the top close button.
+            </div>
+            <div class='pwa-toast-actions'>
+                <button class='pwa-toast-guide-btn' onclick='openPwaHelpModal(); dismissPwaToast(false);'>Show me how</button>
+                <button class='pwa-toast-dismiss-btn' onclick='dismissPwaToast(true)'>Don't show again</button>
+            </div>
+        </div>
+
+        <div id='pwa-help-modal' onclick='closePwaHelpModal()'>
+            <div class='modal-card' onclick='event.stopPropagation()'>
+                <div class='modal-header'>
+                    <div style='display:flex;align-items:center;gap:8px;'>
+                        <span style='font-size:20px;'>📲</span>
+                        <span style='font-size:16px;font-weight:700;'>Add to Home Screen</span>
+                    </div>
+                    <button class='modal-close' onclick='closePwaHelpModal()'>✕</button>
+                </div>
+                <div class='modal-body' style='font-size:13px;line-height:1.5;color:rgba(255,255,255,0.9);'>
+                    <p style='margin:0 0 12px;'>Running OpenWinSidecar from your iPad Home Screen launches in <b>standalone app mode</b>:</p>
+                    <div style='background:rgba(255,255,255,0.06);border-radius:12px;padding:12px 14px;margin-bottom:14px;border:1px solid rgba(255,255,255,0.1);'>
+                        <div style='display:flex;align-items:center;gap:8px;margin-bottom:6px;'>
+                            <span style='color:#34D399;font-weight:700;'>✓</span>
+                            <span><b>No Safari URL bar or tabs</b> taking up space</span>
+                        </div>
+                        <div style='display:flex;align-items:center;gap:8px;margin-bottom:6px;'>
+                            <span style='color:#34D399;font-weight:700;'>✓</span>
+                            <span><b>No annoying top-right 'X' button</b> obscuring your screen</span>
+                        </div>
+                        <div style='display:flex;align-items:center;gap:8px;'>
+                            <span style='color:#34D399;font-weight:700;'>✓</span>
+                            <span>True pixel-to-pixel native iPad resolution</span>
+                        </div>
+                    </div>
+                    <div style='display:flex;flex-direction:column;gap:12px;'>
+                        <div style='display:flex;gap:12px;align-items:flex-start;'>
+                            <div style='background:#2563EB;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;'>1</div>
+                            <div>Tap the <b>Share</b> button in Safari <span style='background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:6px;font-size:11px;'>[⎋ or ⇪]</span> at the top/bottom of your browser.</div>
+                        </div>
+                        <div style='display:flex;gap:12px;align-items:flex-start;'>
+                            <div style='background:#2563EB;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;'>2</div>
+                            <div>Scroll down in the share sheet and tap <b>Add to Home Screen</b> <span style='background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:6px;font-size:11px;'>[ ⊞ ]</span>.</div>
+                        </div>
+                        <div style='display:flex;gap:12px;align-items:flex-start;'>
+                            <div style='background:#2563EB;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;'>3</div>
+                            <div>Tap <b>Add</b> in the top right corner, then open the <b>OpenWinSidecar</b> app from your Home Screen!</div>
+                        </div>
+                    </div>
+                </div>
+                <div class='modal-footer' style='margin-top:20px;'>
+                    <button class='done-btn' onclick='closePwaHelpModal()'>Got it!</button>
+                </div>
+            </div>
+        </div>
+
+        <input id='hidden-kbd-input' type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' style='position:fixed;top:-100px;left:-100px;opacity:0;pointer-events:none;font-size:16px;'>
+        <div id='pointer-dot'></div>
+        <canvas id='viewport'></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('viewport');
+
+        // Renderer: prefer WebGL2 (direct GPU texture upload of VideoFrame/ImageBitmap, less
+        // main-thread work than Canvas2D drawImage) with an automatic Canvas2D fallback. The
+        // choice is made once at startup; a mid-stream swap would require replacing the canvas.
+        let ctx = null;
+        let gl = null, glTexture = null;
+        let useWebGL = false;
+
+        function initWebGLRenderer() {
+            try {
+                const glc = canvas.getContext('webgl2', {
+                    alpha: false,
+                    desynchronized: true,
+                    antialias: false,
+                    depth: false,
+                    stencil: false,
+                    powerPreference: 'high-performance',
+                    preserveDrawingBuffer: false
+                });
+                if (!glc) return false;
+
+                const vsSrc = 'attribute vec2 aPos;attribute vec2 aUV;varying vec2 vUV;void main(){vUV=aUV;gl_Position=vec4(aPos,0.0,1.0);}';
+                const fsSrc = 'precision mediump float;varying vec2 vUV;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUV);}';
+
+                const vs = glc.createShader(glc.VERTEX_SHADER);
+                glc.shaderSource(vs, vsSrc);
+                glc.compileShader(vs);
+                if (!glc.getShaderParameter(vs, glc.COMPILE_STATUS)) return false;
+
+                const fs = glc.createShader(glc.FRAGMENT_SHADER);
+                glc.shaderSource(fs, fsSrc);
+                glc.compileShader(fs);
+                if (!glc.getShaderParameter(fs, glc.COMPILE_STATUS)) return false;
+
+                const prog = glc.createProgram();
+                glc.attachShader(prog, vs);
+                glc.attachShader(prog, fs);
+                glc.linkProgram(prog);
+                if (!glc.getProgramParameter(prog, glc.LINK_STATUS)) return false;
+                glc.useProgram(prog);
+
+                // Fullscreen quad with V-flipped UVs (frames are top-down; GL textures bottom-up).
+                const verts = new Float32Array([-1,-1, 0,1,  1,-1, 1,1,  -1,1, 0,0,  1,1, 1,0]);
+                const buf = glc.createBuffer();
+                glc.bindBuffer(glc.ARRAY_BUFFER, buf);
+                glc.bufferData(glc.ARRAY_BUFFER, verts, glc.STATIC_DRAW);
+
+                const aPos = glc.getAttribLocation(prog, 'aPos');
+                const aUV = glc.getAttribLocation(prog, 'aUV');
+                glc.enableVertexAttribArray(aPos);
+                glc.vertexAttribPointer(aPos, 2, glc.FLOAT, false, 16, 0);
+                glc.enableVertexAttribArray(aUV);
+                glc.vertexAttribPointer(aUV, 2, glc.FLOAT, false, 16, 8);
+
+                const tex = glc.createTexture();
+                glc.bindTexture(glc.TEXTURE_2D, tex);
+                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_MIN_FILTER, glc.LINEAR);
+                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_MAG_FILTER, glc.LINEAR);
+                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_WRAP_S, glc.CLAMP_TO_EDGE);
+                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_WRAP_T, glc.CLAMP_TO_EDGE);
+                glc.uniform1i(glc.getUniformLocation(prog, 'uTex'), 0);
+
+                gl = glc;
+                glTexture = tex;
+                canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
+                console.log('[Renderer] WebGL2 texture path active');
+                return true;
+            } catch (e) {
+                console.warn('[Renderer] WebGL2 unavailable, using Canvas2D', e);
+                return false;
+            }
+        }
+
+        useWebGL = initWebGLRenderer();
+        if (!useWebGL) {
+            ctx = canvas.getContext('2d', {
+                alpha: false,
+                desynchronized: true,
+                willReadFrequently: false
+            });
+            console.log('[Renderer] Canvas2D path active');
+        }
+
+        function paintDrawable(d) {
+            if (useWebGL && gl) {
+                if (canvas.width !== d.width || canvas.height !== d.height) {
+                    canvas.width = d.width;
+                    canvas.height = d.height;
+                    gl.viewport(0, 0, d.width, d.height);
+                }
+                gl.bindTexture(gl.TEXTURE_2D, glTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, d.source);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                return;
+            }
+            if (canvas.width !== d.width || canvas.height !== d.height) {
+                canvas.width = d.width;
+                canvas.height = d.height;
+            }
+            ctx.drawImage(d.source, 0, 0);
+        }
+
+        // VSync-paced presentation. Decoded frames are staged and painted on
+        // requestAnimationFrame (the display's vsync) — never drawn directly on decode. Network /
+        // encoder jitter then cannot judder the picture: the loop always paints the newest staged
+        // frame, and simply paints nothing on a vsync with no new frame (the canvas keeps the
+        // last image). Ownership of a staged frame moves to the loop, which closes it after paint.
+        let pendingDrawable = null;
+        let hasPendingDrawable = false;
+
+        function submitDrawable(source, width, height, timestampUs) {
+            if (pendingDrawable && pendingDrawable.source && pendingDrawable.source.close) {
+                // The previous decoded frame was never painted — a newer frame superseded it
+                // between two vsyncs. Counting this is the only way to see the true cost of
+                // server over-production on a slower display (the decode queue never backs up).
+                replacedRenderCount++;
+                try { pendingDrawable.source.close(); } catch (e) {}
+            }
+            pendingDrawable = { source: source, width: width, height: height, timestampUs: timestampUs, stagedAt: performance.now() };
+            hasPendingDrawable = true;
+        }
+
+        function renderLoop() {
+            rafTicks++;
+            if (hasPendingDrawable && pendingDrawable) {
+                const d = pendingDrawable;
+                pendingDrawable = null;
+                hasPendingDrawable = false;
+                try {
+                    const paintStart = performance.now();
+                    presentationWaitSum += paintStart - d.stagedAt;
+                    paintDrawable(d);
+                    paintTimeSum += performance.now() - paintStart;
+                    if (d.timestampUs !== null && d.timestampUs !== undefined && clockOffsetMs !== null) {
+                        // offset = serverMs - clientMs, so client clock = server clock - offset
+                        const lat = performance.now() - (d.timestampUs / 1000 - clockOffsetMs);
+                        if (lat >= 0 && lat < 3000) {
+                            latencySum += lat; latencySamples++;
+                            if (lat > latencyMax) latencyMax = lat;
+                        }
+                    }
+                    recordFps();
+                } catch (e) {
+                    console.warn('[Render Error]', e);
+                } finally {
+                    if (d.source && d.source.close) {
+                        try { d.source.close(); } catch (e) {}
+                    }
+                }
+            }
+            requestAnimationFrame(renderLoop);
+        }
+
+        function onVideoFrameDecoded(videoFrame) {
+            decodedWindowFrames++;
+            try {
+                // Latest-frame-wins: if more frames are already queued behind this one the
+                // decoder is in a burst — close this one undrawn and keep only the newest frame
+                // of the burst (the render loop paints it on the next vsync).
+                // Dropping here (at decode output) keeps glass-to-glass latency ultra-tight (<60ms)
+                // without corrupting the HEVC delta reference chain.
+                if (videoDecoder && videoDecoder.decodeQueueSize > 1) {
+                    if (videoDecoder.decodeQueueSize > dropWindow.decodePeak)
+                        dropWindow.decodePeak = videoDecoder.decodeQueueSize;
+                    droppedRenderCount++;
+                    registerHevcDrop();
+                    videoFrame.close();
+                    return;
+                }
+                submitDrawable(videoFrame, videoFrame.displayWidth, videoFrame.displayHeight, Number(videoFrame.timestamp));
+            } catch (e) {
+                console.warn('[Render Error]', e);
+                try { videoFrame.close(); } catch (e2) {}
+            }
+        }
+
+        // Sustained-backlog recovery: >30 dropped renders inside a 5s sliding window means
+        // the stream is persistently outrunning the decoder/renderer — ask the server for a
+        // fresh IDR (cheap resync) at most once per window.
+        function registerHevcDrop() {
+            const now = performance.now();
+            if (now - dropWindow.start > 5000) {
+                dropWindow.start = now;
+                dropWindow.drops = 0;
+                dropWindow.decodePeak = 0;
+            }
+            dropWindow.drops++;
+            // Render drops are by design (latest-wins) and are NOT corruption. Only request a
+            // fresh IDR when the decoder itself is genuinely backlogged (~25 frames ≈ 0.4s).
+            // Previously this fired on >30 drops/5s, which — combined with the server tearing
+            // down and respawning the encoder on every request — produced an IDR→restart→drop
+            // feedback loop that froze the stream every few seconds.
+            if (dropWindow.decodePeak > 24 && now - dropWindow.lastForceIdr > 10000) {
+                dropWindow.lastForceIdr = now;
+                console.warn('[Backpressure] decoder backlog peak=' + dropWindow.decodePeak + ' — requesting fresh IDR');
+                if (ws && ws.readyState === WebSocket.OPEN) ws.send('forceidr');
+            }
+        }
+
+        function renderDirect(source, width, height) {
+            // JPEG path joins the same vsync loop (no timestamp available — latency is tracked
+            // on the HEVC path).
+            submitDrawable(source, width, height, null);
+        }
+        
+        const container = document.getElementById('container');
+        const pointerDot = document.getElementById('pointer-dot');
+        const fpsLabel = document.getElementById('fps');
+        const latLabel = document.getElementById('lat');
+        
+        const resSelect = document.getElementById('res-select');
+        const qualitySelect = document.getElementById('quality-select');
+        const codecSelect = document.getElementById('codec-select');
+        const depthSelect = document.getElementById('depth-select');
+
+        let ws;
+        let frameCount = 0;
+        let lastFpsUpdate = performance.now();
+        let isRendering = false;
+        let videoDecoder = null;
+        let hevcReady = false;
+        let hevcSupportKnown = false;
+        let hevcSupported = false;
+        let hevcErrorCount = 0;
+        let hevcErrorWindowStart = 0;
+
+        // Smoothness / latency telemetry + backpressure state
+        let droppedRenderCount = 0;   // HEVC frames closed undrawn (bursts)
+        let decodeQueuePeak = 0;      // max decoder queue depth this stats window
+        let replacedRenderCount = 0;  // staged-but-unpainted frames replaced by a newer one this window
+        let jpegSeq = 0;              // monotonic JPEG delivery order
+        let jpegDrops = 0;            // stale JPEG bitmaps discarded
+        let hevcChunksReceived = 0;
+        let bytesReceived = 0;
+        let lastStatsWindow = performance.now();
+        let statsWindowFrames = 0;
+        let statsWindowBytes = 0;
+        let receivedWindowFrames = 0, decodedWindowFrames = 0, rafTicks = 0;
+        let paintTimeSum = 0, presentationWaitSum = 0;
+        let decodeErrors = 0;
+        const dropWindow = { start: performance.now(), drops: 0, decodePeak: 0, lastForceIdr: 0 };
+
+        // Glass-to-glass latency estimation. The server answers `sync` with its monotonic µs
+        // clock; from the RTT we derive the clock offset, then measure each rendered frame as
+        // now - (frame timestamp + offset). Costs a 2s heartbeat and one subtraction per frame.
+        let clockOffsetMs = null;
+        let minRttMs = Infinity;
+        let recentRttHistory = [];
+        let latencySum = 0, latencySamples = 0, latencyMax = 0, latencyAvg = 0;
+        function sendSync() {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send('sync:' + Math.round(performance.now()));
+        }
+        function onSyncAck(spec) {
+            const t1 = performance.now();
+            const comma = spec.indexOf(',');
+            if (comma <= 0) return;
+            const cms = Number(spec.substring(0, comma));
+            const sus = Number(spec.substring(comma + 1));
+            if (isFinite(cms) && isFinite(sus)) {
+                const rtt = t1 - cms;
+                if (rtt >= 0 && rtt < 3000) {
+                    recentRttHistory.push(rtt);
+                    if (recentRttHistory.length > 10) recentRttHistory.shift();
+
+                    const localMin = Math.min(...recentRttHistory);
+                    // If network baseline permanently shifted (e.g. WiFi band change), reset min
+                    if (localMin > minRttMs + 40 && recentRttHistory.length >= 4) {
+                        minRttMs = localMin;
+                    } else if (rtt < minRttMs) {
+                        minRttMs = rtt;
+                    }
+
+                    // Update clock offset from probes near the minimum RTT to avoid jitter bias
+                    if (rtt <= minRttMs + 15) {
+                        const calculatedOffset = (sus / 1000) - (cms + rtt / 2);
+                        if (clockOffsetMs === null) {
+                            clockOffsetMs = calculatedOffset;
+                        } else {
+                            clockOffsetMs = (clockOffsetMs * 0.75) + (calculatedOffset * 0.25);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Probe WebCodecs once per device: ask the browser whether it can hardware-decode
+        // HEVC. Fail-safe by design: never throws, never hangs (2s timeout), and answers
+        // false on any doubt — the stream starts on JPEG and upgrades only on a clear yes.
+        async function detectHevcSupportSafe() {
+            if (hevcSupportKnown) return hevcSupported;
+            if (!window.VideoDecoder || !VideoDecoder.isConfigSupported) {
+                hevcSupportKnown = true;
+                hevcSupported = false;
+                return false;
+            }
+            try {
+                // optimizeForLatency omitted: some WebKit builds reject the probe with it,
+                // and its absence doesn't change the capability answer meaningfully.
+                const probe = VideoDecoder.isConfigSupported({
+                    codec: 'hvc1.1.6.L93.B0',
+                    hardwareAcceleration: 'prefer-hardware'
+                });
+                const support = await Promise.race([
+                    probe,
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 2000))
+                ]);
+                hevcSupported = !!(support && support.supported);
+            } catch (e) {
+                hevcSupported = false; // timeout/throw -> treat as unsupported, stream JPEG
+            }
+            hevcSupportKnown = true;
+            console.log('[WebCodecs] HEVC hardware decode ' + (hevcSupported ? 'available' : 'NOT available') + ' on this device');
+            return hevcSupported;
+        }
+
+        // Kept for compatibility with earlier call sites
+        async function detectHevcSupport() { return detectHevcSupportSafe(); }
+
+        // Default codec per device capability; called after the socket opens
+        async function pickDefaultCodec() {
+            const canHevc = await detectHevcSupport();
+            const want = canHevc ? 'hevc' : 'intra';
+            if (codecSelect) codecSelect.value = want;
+            return want;
+        }
+
+        function toggleSettingsModal() {
+            const modal = document.getElementById('settings-modal');
+            modal.classList.toggle('active');
+        }
+
+        function openSettingsModal() {
+            document.getElementById('settings-modal').classList.add('active');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.remove('active');
+        }
+
+        function onModalBackdropClick(e) {
+            if (e.target && e.target.id === 'settings-modal') {
+                closeSettingsModal();
+            }
+        }
+
+        function isPwaStandalone() {
+            return window.matchMedia('(display-mode: standalone)').matches ||
+                   window.navigator.standalone === true;
+        }
+
+        function openPwaHelpModal() {
+            const modal = document.getElementById('pwa-help-modal');
+            if (modal) modal.classList.add('active');
+        }
+
+        function closePwaHelpModal() {
+            const modal = document.getElementById('pwa-help-modal');
+            if (modal) modal.classList.remove('active');
+        }
+
+        function dismissPwaToast(forever) {
+            const toast = document.getElementById('pwa-toast');
+            if (toast) toast.style.display = 'none';
+            if (forever) {
+                try { localStorage.setItem('pwa_prompt_dismissed', '1'); } catch (e) { }
+            }
+        }
+
+        function checkPwaPrompt() {
+            if (isPwaStandalone()) return; // Already running as Home Screen Web App!
+            try {
+                if (localStorage.getItem('pwa_prompt_dismissed') === '1') return;
+            } catch (e) { }
+
+            // Detect iOS / iPadOS
+            const isAppleDevice = /Macintosh|iPad|iPhone|iPod/.test(navigator.userAgent) &&
+                                  (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+            if (isAppleDevice) {
+                setTimeout(() => {
+                    const toast = document.getElementById('pwa-toast');
+                    if (toast && !isPwaStandalone()) toast.style.display = 'block';
+                }, 2500);
+            }
+        }
+
+        function recordFps() {
+            frameCount++;
+            statsWindowFrames++;
+            const now = performance.now();
+            if (now - lastFpsUpdate >= 1000) {
+                fpsLabel.innerText = Math.round((frameCount * 1000) / (now - lastFpsUpdate)) + ' FPS';
+                frameCount = 0;
+                lastFpsUpdate = now;
+            }
+        }
+
+        // Telemetry: every 5s log the window stats and ship them to the server, then
+        // reset the window counters (cumulative counters keep running for display).
+        setInterval(() => {
+            const now = performance.now();
+            const elapsed = now - lastStatsWindow;
+            if (elapsed <= 0) return;
+            latencyAvg = latencySamples > 0 ? latencySum / latencySamples : latencyAvg;
+            const stats5s = {
+                viewerVersion: '2026-09-11-perf-recovery',
+                visible: document.visibilityState === 'visible',
+                fps: Math.round((statsWindowFrames * 1000) / elapsed),
+                receivedFps: Math.round((receivedWindowFrames * 1000) / elapsed),
+                decodedFps: Math.round((decodedWindowFrames * 1000) / elapsed),
+                rafFps: Math.round((rafTicks * 1000) / elapsed),
+                paintMs: statsWindowFrames ? Math.round(paintTimeSum * 10 / statsWindowFrames) / 10 : 0,
+                presentationWaitMs: statsWindowFrames ? Math.round(presentationWaitSum * 10 / statsWindowFrames) / 10 : 0,
+                decodeErrors: decodeErrors,
+                droppedRenderCount: droppedRenderCount,
+                decodeQueuePeak: decodeQueuePeak,
+                replacedRenderCount: replacedRenderCount,
+                jpegDrops: jpegDrops,
+                hevcChunksReceived: hevcChunksReceived,
+                bytesReceived: bytesReceived,
+                kbps: Math.round((statsWindowBytes * 8) / elapsed),
+                latencyMs: Math.round(latencyAvg),
+                latencyMaxMs: Math.round(latencyMax)
+            };
+            if (latLabel) {
+                latLabel.textContent = latencySamples > 0 || latencyAvg > 0 ? '· ' + Math.round(latencyAvg) + 'ms' : '';
+            }
+            console.log('[Stats]', JSON.stringify(stats5s));
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('stats:' + JSON.stringify(stats5s));
+            }
+            statsWindowFrames = 0;
+            statsWindowBytes = 0;
+            receivedWindowFrames = decodedWindowFrames = rafTicks = 0;
+            paintTimeSum = presentationWaitSum = 0;
+            decodeErrors = 0;
+            decodeQueuePeak = 0;
+            replacedRenderCount = 0;
+            latencySum = 0;
+            latencySamples = 0;
+            latencyMax = 0;
+            lastStatsWindow = now;
+        }, 5000);
+
+        let pendingHvcC = null;
+        let pendingCodec = 'hvc1.1.6.L93.B0';
+        let configuredHvcC = null;
+        let configuredCodec = null;
+        let needsHevcKeyframe = true;
+        let keyframeRequestPending = false;
+        let lastKeyframeRequest = -Infinity;
+
+        function requestHevcKeyframe() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const now = performance.now();
+            // The host rate-limits encoder restarts. Retry after that window if our first
+            // request was ignored, instead of waiting for the ten-minute periodic keyframe.
+            if (keyframeRequestPending && now - lastKeyframeRequest < 8500) return;
+            keyframeRequestPending = true;
+            lastKeyframeRequest = now;
+            ws.send('forceidr');
+        }
+
+        function initHevcDecoder() {
+            if (!window.VideoDecoder) return false;
+            try {
+                if (!pendingHvcC) return false; // server always sends length-prefixed NALs + hvcC
+                if (videoDecoder && videoDecoder.state === 'configured' &&
+                    configuredCodec === pendingCodec && configuredHvcC === pendingHvcC) return true;
+                if (videoDecoder && videoDecoder.state !== 'closed') {
+                    videoDecoder.close();
+                }
+
+                videoDecoder = new VideoDecoder({
+                    output: onVideoFrameDecoded,
+                    error: (e) => {
+                        const now = performance.now();
+                        if (now - hevcErrorWindowStart > 60000) { hevcErrorWindowStart = now; hevcErrorCount = 0; }
+                        hevcErrorCount++;
+                        const why = (e && (e.message || e.toString())) || 'unknown';
+                        console.warn(`[WebCodecs HEVC error #${hevcErrorCount}]`, why);
+                        // Report the failure reason to the server for diagnostics
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send('decerr:' + why);
+                        }
+                        // A single corrupt chunk kills the decoder object but not the stream:
+                        // rebuild the decoder and resync on a fresh server keyframe. Only fall
+                        // back to JPEG after repeated failures — a permanent downgrade from one
+                        // bad NAL is how sessions froze at ~20fps on tens of Mbps of JPEGs.
+                        if (hevcErrorCount <= 3 && pendingHvcC) {
+                            try { videoDecoder.close(); } catch (err2) {}
+                            needsHevcKeyframe = true;
+                            if (initHevcDecoder()) {
+                                requestHevcKeyframe();
+                                return;
+                            }
+                        }
+                        changeCodec('intra');
+                    }
+                });
+
+                const config = {
+                    codec: pendingCodec,
+                    hardwareAcceleration: 'prefer-hardware',
+                    optimizeForLatency: true
+                };
+                if (pendingHvcC) config.description = pendingHvcC;
+
+                videoDecoder.configure(config);
+                configuredCodec = pendingCodec;
+                configuredHvcC = pendingHvcC;
+                needsHevcKeyframe = true;
+
+                hevcReady = true;
+                console.log('[WebCodecs] Hardware HEVC VideoDecoder initialized', pendingHvcC ? 'with hvcC description' : 'Annex-B mode');
+                return true;
+            } catch (err) {
+                console.warn('[WebCodecs] HEVC not supported:', err);
+                return false;
+            }
+        }
+
+        function changeCodec(val) {
+            if (codecSelect) codecSelect.value = val;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('codec:' + val);
+            }
+            if (val === 'hevc') {
+                initHevcDecoder();
+                if (needsHevcKeyframe && pendingHvcC) requestHevcKeyframe();
+            }
+        }
+
+        function changeDepth(val) {
+            const d = parseInt(val, 10) === 10 ? 10 : 8;
+            if (depthSelect) depthSelect.value = String(d);
+            // The server restarts the encoder and ships a fresh hvcC description, which
+            // reconfigures the decoder via the desc: handler (with auto-revert to 8-bit
+            // if this device rejects Main10).
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:' + d);
+        }
+
+        function getAutoDetectedResolution() {
+            const dpr = window.devicePixelRatio || 2;
+            const isLandscape = window.innerWidth >= window.innerHeight;
+            const sW = isLandscape ? Math.max(window.screen.width, window.screen.height) : Math.min(window.screen.width, window.screen.height);
+            const sH = isLandscape ? Math.min(window.screen.width, window.screen.height) : Math.max(window.screen.width, window.screen.height);
+
+            let targetW = Math.round(sW);
+            let targetH = Math.round(sH);
+
+            if (!targetW || targetW <= 0) targetW = window.innerWidth || 1180;
+            if (!targetH || targetH <= 0) targetH = window.innerHeight || 820;
+
+            targetW = Math.floor(targetW / 2) * 2;
+            targetH = Math.floor(targetH / 2) * 2;
+
+            let physW = Math.round(targetW * dpr);
+            let physH = Math.round(targetH * dpr);
+            physW = Math.floor(physW / 2) * 2;
+            physH = Math.floor(physH / 2) * 2;
+            return { width: physW, height: physH, logicalW: targetW, logicalH: targetH, dpr: dpr };
+        }
+
+        function getOptimalResolution() {
+            const selectedVal = resSelect ? resSelect.value : '2360x1640';
+            if (selectedVal && selectedVal !== 'auto') {
+                const atIdx = selectedVal.indexOf('@');
+                let hz = 60;
+                let resPart = selectedVal;
+                if (atIdx > 0) {
+                    hz = parseInt(selectedVal.substring(atIdx + 1), 10) || 60;
+                    resPart = selectedVal.substring(0, atIdx);
+                }
+                const [pw, ph] = resPart.split('x').map(Number);
+                return { width: pw, height: ph, hz: hz };
+            }
+            const auto = getAutoDetectedResolution();
+            return { width: auto.width, height: auto.height, hz: 60 };
+        }
+
+        function changeCursorMode(val) {
+            const c = document.getElementById('container');
+            const cv = canvas || document.getElementById('viewport');
+            if (val === 'touch') {
+                if (cv) cv.style.setProperty('cursor', 'none', 'important');
+                if (c) c.style.setProperty('cursor', 'none', 'important');
+                if (ws && ws.readyState === WebSocket.OPEN) ws.send('cursor:touch');
+            } else if (val === 'client') {
+                if (cv) cv.style.setProperty('cursor', 'default', 'important');
+                if (c) c.style.setProperty('cursor', 'default', 'important');
+                if (ws && ws.readyState === WebSocket.OPEN) ws.send('cursor:client');
+            } else { // 'host'
+                if (cv) cv.style.setProperty('cursor', 'none', 'important');
+                if (c) c.style.setProperty('cursor', 'none', 'important');
+                if (ws && ws.readyState === WebSocket.OPEN) ws.send('cursor:host');
+            }
+        }
+
+        function changeQuality(val) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('quality:' + val);
+            }
+        }
+
+        function changeDpi(val) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log(`[DPI] Changing Windows Display Scale to: ${val}%`);
+                ws.send('dpi:' + val);
+            }
+        }
+
+        function changeZoom(val) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log(`[Zoom] Setting UI Magnification: ${val}x`);
+                ws.send('zoom:' + val);
+            }
+        }
+
+        let lastResolutionRequest = '';
+        function syncResolutionNow() {
+            const opt = getOptimalResolution();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const hzStr = opt.hz > 0 ? ` @ ${opt.hz}Hz` : '';
+                console.log(`[Sync] Adjusting to target resolution: ${opt.width}x${opt.height}${hzStr}`);
+                const msg = opt.hz > 0 ? `set_res:${opt.width},${opt.height},${opt.hz}` : `set_res:${opt.width},${opt.height}`;
+                if (msg !== lastResolutionRequest) {
+                    ws.send(msg);
+                    lastResolutionRequest = msg;
+                }
+            }
+            // Browser chrome/fullscreen/resize events do not invalidate HEVC references.
+            // Only a new server description or a real decoder failure needs reconfiguration.
+        }
+
+        function changeResolutionPreset(val) {
+            syncResolutionNow();
+        }
+
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('[WakeLock] Screen WakeLock active');
+                }
+            } catch (e) { }
+        }
+
+        let authenticated = true; // open servers never ask for a password
+        let authChallenge = null; // current server challenge (authreq:<challenge>)
+
+        // Pure-JS SHA-256: crypto.subtle is unavailable on http://LAN-IP (non-secure context)
+        function sha256Hex(ascii) {
+            function rightRotate(v, a) { return (v >>> a) | (v << (32 - a)); }
+            const K = [
+                0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+                0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+                0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+                0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+                0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+                0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+                0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+                0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+            ];
+            const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+            const bytes = [];
+            for (let i = 0; i < ascii.length; i++) {
+                let c = ascii.charCodeAt(i);
+                if (c < 128) bytes.push(c);
+                else if (c < 2048) { bytes.push((c >> 6) | 192, (c & 63) | 128); }
+                else { bytes.push((c >> 12) | 224, ((c >> 6) & 63) | 128, (c & 63) | 128); }
+            }
+            const bitLen = bytes.length * 8;
+            bytes.push(0x80);
+            while (bytes.length % 64 !== 56) bytes.push(0);
+            for (let i = 7; i >= 0; i--) bytes.push((bitLen / Math.pow(2, i * 8)) & 0xFF);
+            for (let block = 0; block < bytes.length / 64; block++) {
+                const w = new Array(64);
+                for (let t = 0; t < 16; t++) {
+                    const o = block * 64 + t * 4;
+                    w[t] = (bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3];
+                }
+                for (let t = 16; t < 64; t++) {
+                    const s0 = rightRotate(w[t - 15], 7) ^ rightRotate(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+                    const s1 = rightRotate(w[t - 2], 17) ^ rightRotate(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+                    w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+                }
+                let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+                for (let t = 0; t < 64; t++) {
+                    const S1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+                    const ch = (e & f) ^ (~e & g);
+                    const temp1 = (h + S1 + ch + K[t] + w[t]) | 0;
+                    const S0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+                    const maj = (a & b) ^ (a & c) ^ (b & c);
+                    const temp2 = (S0 + maj) | 0;
+                    h = g; g = f; f = e; e = (d + temp1) | 0;
+                    d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+                }
+                H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+                H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+            }
+            return H.map(x => ('00000000' + ((x >>> 0).toString(16))).slice(-8)).join('');
+        }
+
+        function syncSessionSettings() {
+            syncResolutionNow();
+            const c = (codecSelect ? codecSelect.value : 'hevc');
+            changeCodec(c); // explicit codec message every (re)connect — server always starts on a known path
+            const dd = (depthSelect ? depthSelect.value : '8');
+            changeDepth(dd);
+            const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.0';
+            changeZoom(z);
+            const sel = document.getElementById('display-select').value;
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send('display:' + sel);
+            const cur = document.getElementById('cursor-select') ? document.getElementById('cursor-select').value : 'host';
+            changeCursorMode(cur);
+            changeDpi(175);
+        }
+
+        function showAuthPrompt(err) {
+            const overlay = document.getElementById('auth-overlay');
+            if (!overlay) return;
+            authenticated = false;
+            overlay.classList.add('active');
+            const errEl = document.getElementById('auth-error');
+            if (errEl) errEl.innerText = err || '';
+            const input = document.getElementById('auth-input');
+            if (input) { input.value = ''; setTimeout(() => input.focus(), 150); }
+        }
+
+        function hideAuthPrompt() {
+            const overlay = document.getElementById('auth-overlay');
+            if (overlay) overlay.classList.remove('active');
+        }
+
+        function submitAuth() {
+            const input = document.getElementById('auth-input');
+            const pw = input ? input.value : '';
+            if (!pw || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            if (authChallenge) {
+                // Challenge-response: send SHA-256(password + challenge), never the password
+                const resp = sha256Hex(pw + authChallenge);
+                ws.send('auth:' + resp);
+            } else {
+                ws.send('auth:' + pw); // legacy servers without a challenge
+            }
+        }
+
+        function onAuthBackdropClick(e) {
+            if (e.target && e.target.id === 'auth-overlay') submitAuth();
+        }
+
+        const authInput = document.getElementById('auth-input');
+        if (authInput) {
+            authInput.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') submitAuth();
+            });
+        }
+
+        function handleBinaryPacket(data) {
+            if (!(data instanceof ArrayBuffer)) return;
+            bytesReceived += data.byteLength;
+            statsWindowBytes += data.byteLength;
+            const headerView = new DataView(data, 0, 15);
+            const codecType = headerView.getUint8(0);
+            const flags = headerView.getUint8(1);
+            const isKeyframe = (flags & 0x01) !== 0;
+            const curVisible = (flags & 0x02) !== 0;
+            const timestampUs = headerView.getBigInt64(2);
+            const curX = headerView.getInt16(10);
+            const curY = headerView.getInt16(12);
+
+            const payloadBytes = new Uint8Array(data, 15);
+
+            // 1. Hardware HEVC WebCodecs decoding path
+            if (codecType === 2) {
+                hevcChunksReceived++;
+                receivedWindowFrames++;
+                if (!videoDecoder || videoDecoder.state !== 'configured') return;
+                if (needsHevcKeyframe && !isKeyframe) {
+                    requestHevcKeyframe();
+                    return;
+                }
+                try {
+                    const chunk = new EncodedVideoChunk({
+                        type: isKeyframe ? 'key' : 'delta',
+                        timestamp: Number(timestampUs),
+                        data: payloadBytes
+                    });
+                    decodeQueuePeak = Math.max(decodeQueuePeak, videoDecoder.decodeQueueSize);
+                    videoDecoder.decode(chunk);
+                    needsHevcKeyframe = false;
+                    if (isKeyframe) keyframeRequestPending = false;
+                    return;
+                } catch (err) {
+                    decodeErrors++;
+                    needsHevcKeyframe = true;
+                    requestHevcKeyframe();
+                    console.warn('[HEVC Chunk Decode Error]', err);
+                }
+                return; // HEVC is never a JPEG, including on a decode failure.
+            }
+
+            // 2. Intra JPEG Fallback path
+            if (codecType !== 0) return;
+            receivedWindowFrames++;
+            try {
+                const blob = new Blob([payloadBytes], { type: 'image/jpeg' });
+                let rendered = false;
+
+                if (window.createImageBitmap) {
+                    try {
+                        // Latest-wins: only paint the bitmap if no newer JPEG packet
+                        // arrived while decode was in flight (bursts can resolve
+                        // out of order — a stale bitmap must never overwrite a newer frame).
+                        jpegSeq++;
+                        const seq = jpegSeq;
+                        createImageBitmap(blob).then(bmp => {
+                            if (seq !== jpegSeq) {
+                                jpegDrops++;
+                                if (bmp.close) bmp.close();
+                                return;
+                            }
+                            renderDirect(bmp, bmp.width, bmp.height);
+                            // The presentation loop owns the bitmap until it is painted/replaced.
+                        }).catch(() => {});
+                        rendered = true;
+                    } catch (e) { }
+                }
+
+                if (!rendered) {
+                    const url = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = () => {
+                        renderDirect(img, img.naturalWidth, img.naturalHeight);
+                        URL.revokeObjectURL(url);
+                    };
+                    img.onerror = () => {
+                        URL.revokeObjectURL(url);
+                    };
+                    img.src = url;
+                }
+            } catch (err) {
+                console.error('[Render Error]', err);
+            }
+        }
+
+        function connectWs() {
+            lastResolutionRequest = '';
+            clockOffsetMs = null;
+            minRttMs = Infinity;
+            recentRttHistory = [];
+            pendingHvcC = configuredHvcC = configuredCodec = null;
+            needsHevcKeyframe = true;
+            keyframeRequestPending = false;
+            lastKeyframeRequest = -Infinity;
+            if (videoDecoder && videoDecoder.state !== 'closed') videoDecoder.close();
+            videoDecoder = null;
+            if (pendingDrawable && pendingDrawable.source.close) pendingDrawable.source.close();
+            pendingDrawable = null;
+            hasPendingDrawable = false;
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            // Announce the codec in the URL so the very first frame is already HEVC (avoids a
+            // one-frame JPEG flash while the codec message is still in flight).
+            const initialCodec = codecSelect ? codecSelect.value : 'hevc';
+            ws = new WebSocket(`${protocol}//${location.host}/?codec=${encodeURIComponent(initialCodec)}`);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = async () => {
+                console.log('[OpenWinSidecar] Stream Connected');
+                requestWakeLock();
+                sendSync();
+                syncResolutionNow();
+
+                // ALWAYS send an explicit codec choice so the server starts streaming on a
+                // known path. The probe refines it when it resolves (fail-safe: a hung or
+                // throwing isConfigSupported on some Safari versions can never stall the
+                // stream — JPEG flows immediately, HEVC upgrades it when confirmed).
+                const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.0';
+                changeZoom(z);
+
+                const sel = document.getElementById('display-select').value;
+                ws.send('display:' + sel);
+
+                const cur = document.getElementById('cursor-select') ? document.getElementById('cursor-select').value : 'host';
+                changeCursorMode(cur);
+                changeDpi(175);
+
+                let c = (codecSelect ? codecSelect.value : 'hevc');
+                changeCodec(c); // start streaming NOW with the current selection (default: hevc -> server encodes; probe may switch to intra)
+
+                if (c === 'hevc') {
+                    const canHevc = await detectHevcSupportSafe();
+                    if (!canHevc) {
+                        codecSelect.value = 'intra';
+                        changeCodec('intra');
+                    }
+                }
+            };
+
+            ws.onmessage = async (e) => {
+                if (typeof e.data === 'string') {
+
+                    // Server-side control messages
+                    if (e.data.startsWith('desc:')) {
+                        // hvcC description + codec string for Safari's WebCodecs HEVC decode
+                        const spec = e.data.substring(5);
+                        const sep = spec.indexOf('|');
+                        if (sep > 0) {
+                            pendingCodec = spec.substring(0, sep);
+                            try {
+                                const bin = atob(spec.substring(sep + 1));
+                                const bytes = new Uint8Array(bin.length);
+                                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                                pendingHvcC = bytes.buffer;
+                                console.log('[WebCodecs] hvcC description received:', pendingCodec, bytes.length, 'bytes');
+                            } catch (err) {
+                                console.warn('[WebCodecs] bad hvcC payload', err);
+                                pendingHvcC = null;
+                            }
+                            if (codecSelect && codecSelect.value === 'hevc') {
+                                if (!initHevcDecoder() && depthSelect) {
+                                    // This device rejects the stream's profile (e.g. Main10) —
+                                    // drop back to 8-bit instead of a black screen.
+                                    depthSelect.value = '8';
+                                    if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:8');
+                                    console.warn('[Color] Stream profile rejected by decoder — reverted to 8-bit');
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    if (e.data.startsWith('syncack:')) {
+                        onSyncAck(e.data.substring('syncack:'.length));
+                        return;
+                    }
+                    if (e.data === 'auth:required') {
+                        // Challenge arrives separately via authreq:<challenge>
+                        showAuthPrompt('');
+                        return;
+                    }
+                    if (e.data.startsWith('authreq:')) {
+                        authChallenge = e.data.substring('authreq:'.length);
+                        showAuthPrompt('');
+                        return;
+                    }
+                    if (e.data === 'auth:ok') {
+                        hideAuthPrompt();
+                        syncSessionSettings();
+                        return;
+                    }
+                    if (e.data === 'auth:denied') {
+                        showAuthPrompt('Wrong password — try again.');
+                        return;
+                    }
+                    // Server-side codec fallback notification (e.g. QSV encoder unavailable)
+                    if (e.data === 'codec:intra') {
+                        if (codecSelect) codecSelect.value = 'intra';
+                    }
+                    return;
+                }
+                if (e.data instanceof ArrayBuffer) {
+                    handleBinaryPacket(e.data);
+                }
+            };
+
+            ws.onclose = () => {
+                const fps = document.getElementById('fps');
+                if (fps) fps.textContent = '⟳ reconnecting';
+                setTimeout(connectWs, 1000);
+            };
+        }
+
+        function changeDisplay(val) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('display:' + val);
+            }
+        }
+
+        function sendInput(action, e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX = e.clientX;
+            let clientY = e.clientY;
+
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            }
+
+            if (clientX === undefined || clientY === undefined) return;
+
+            if (pointerDot) {
+                if (action === 'up' || action === 'cancel') {
+                    pointerDot.style.display = 'none';
+                } else if (e.pointerType === 'touch' || (!e.pointerType && e.touches)) {
+                    pointerDot.style.display = 'block';
+                    pointerDot.style.left = clientX + 'px';
+                    pointerDot.style.top = clientY + 'px';
+                }
+            }
+
+            let renderW = rect.width;
+            let renderH = rect.height;
+            let renderX = 0;
+            let renderY = 0;
+
+            const elemW = rect.width, elemH = rect.height;
+            const contentW = canvas.width || 1180, contentH = canvas.height || 820;
+            if (contentW > 0 && contentH > 0 && elemW > 0 && elemH > 0) {
+                const elemAspect = elemW / elemH;
+                const contentAspect = contentW / contentH;
+                if (elemAspect > contentAspect) {
+                    renderH = elemH;
+                    renderW = elemH * contentAspect;
+                    renderX = (elemW - renderW) / 2;
+                    renderY = 0;
+                } else {
+                    renderW = elemW;
+                    renderH = elemW / contentAspect;
+                    renderX = 0;
+                    renderY = (elemH - renderH) / 2;
+                }
+            }
+
+            const normX = Math.max(0, Math.min(1, (clientX - rect.left - renderX) / renderW));
+            const normY = Math.max(0, Math.min(1, (clientY - rect.top - renderY) / renderH));
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(`input:${action},${normX.toFixed(4)},${normY.toFixed(4)}`);
+            }
+        }
+
+        // --- Single-finger touch / mouse (Immediate dispatch, 6ms throttle ceiling) ---
+        let isDown = false;
+        let lastMoveSent = 0;
+
+        container.addEventListener('pointerdown', (e) => {
+            isDown = true;
+            lastMoveSent = performance.now();
+            sendInput('down', e);
+        }, { passive: true });
+
+        container.addEventListener('pointermove', (e) => {
+            if (isDown || e.pointerType === 'mouse' || e.pointerType === 'pen') {
+                const now = performance.now();
+                if (now - lastMoveSent >= 6) {
+                    lastMoveSent = now;
+                    sendInput('move', e);
+                }
+            }
+        }, { passive: true });
+
+        container.addEventListener('pointerup', (e) => {
+            isDown = false;
+            sendInput('up', e);
+        }, { passive: true });
+
+        container.addEventListener('pointercancel', (e) => {
+            isDown = false;
+            sendInput('up', e);
+        }, { passive: true });
+
+        // --- Two-finger scroll ---
+        let lastTouchY = 0;
+        let lastTouchCount = 0;
+        let twoFingerStart = 0;
+        container.addEventListener('touchstart', (e) => {
+            lastTouchCount = e.touches.length;
+            if (e.touches.length === 2) {
+                lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                twoFingerStart = performance.now();
+                e.preventDefault();
+            }
+        }, { passive: false });
+        container.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && ws && ws.readyState === WebSocket.OPEN) {
+                const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                const delta = Math.round((lastTouchY - avgY) * 3);
+                if (Math.abs(delta) > 2) {
+                    ws.send('scroll:' + delta);
+                    lastTouchY = avgY;
+                }
+                e.preventDefault();
+            }
+        }, { passive: false });
+        container.addEventListener('touchend', (e) => {
+            if (lastTouchCount === 2 && e.touches.length === 0) {
+                const elapsed = performance.now() - twoFingerStart;
+                if (elapsed < 300 && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send('rightclick');
+                }
+            }
+            lastTouchCount = e.touches.length;
+        }, { passive: true });
+
+        // --- Mouse wheel (desktop browser) ---
+        container.addEventListener('wheel', (e) => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('scroll:' + Math.round(-e.deltaY));
+            }
+            e.preventDefault();
+        }, { passive: false });
+
+        // --- Keyboard forwarding ---
+        // Physical-key (e.code) → Windows VK mapping: stable across active input layouts
+        // and immune to the IME keyCode-229 problem. Falls back to e.keyCode for codes
+        // not in the table (or legacy browsers without e.code).
+        const CODE_TO_VK = {
+            Escape:27, Digit1:49, Digit2:50, Digit3:51, Digit4:52, Digit5:53, Digit6:54, Digit7:55, Digit8:56, Digit9:57, Digit0:48,
+            Minus:189, Equal:187, Backspace:8, Tab:9,
+            KeyQ:81, KeyW:87, KeyE:69, KeyR:82, KeyT:84, KeyY:89, KeyU:85, KeyI:73, KeyO:79, KeyP:80,
+            BracketLeft:219, BracketRight:221, Backslash:220, CapsLock:20,
+            KeyA:65, KeyS:83, KeyD:68, KeyF:70, KeyG:71, KeyH:72, KeyJ:74, KeyK:75, KeyL:76,
+            Semicolon:186, Quote:222, Enter:13,
+            KeyZ:90, KeyX:88, KeyC:67, KeyV:86, KeyB:66, KeyN:78, KeyM:77,
+            Comma:188, Period:190, Slash:191, Space:32,
+            Insert:45, Delete:46, Home:36, End:35, PageUp:33, PageDown:34,
+            ArrowLeft:37, ArrowUp:38, ArrowRight:39, ArrowDown:40,
+            Backquote:192,
+            F1:112, F2:113, F3:114, F4:115, F5:116, F6:117, F7:118, F8:119, F9:120, F10:121, F11:122, F12:123,
+            ShiftLeft:160, ShiftRight:161, ControlLeft:162, ControlRight:163, AltLeft:164, AltRight:165,
+            Numpad0:96, Numpad1:97, Numpad2:98, Numpad3:99, Numpad4:100, Numpad5:101, Numpad6:102, Numpad7:103, Numpad8:104, Numpad9:105,
+            NumpadMultiply:106, NumpadAdd:107, NumpadSubtract:109, NumpadDecimal:110, NumpadDivide:111
+        };
+        function eventToVk(e) {
+            if (e.code && CODE_TO_VK[e.code] !== undefined) return CODE_TO_VK[e.code];
+            return e.keyCode; // legacy fallback
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (!authenticated) return; // don't forward keystrokes while the password prompt is up
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('key:down,' + eventToVk(e));
+                if (!e.metaKey && !e.ctrlKey) e.preventDefault();
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            if (!authenticated) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('key:up,' + eventToVk(e));
+                e.preventDefault();
+            }
+        });
+
+        // --- Mobile Virtual Keyboard integration ---
+        const hiddenKbd = document.getElementById('hidden-kbd-input');
+        function toggleVirtualKeyboard() {
+            if (hiddenKbd) {
+                hiddenKbd.focus();
+                hiddenKbd.click();
+            }
+        }
+
+        if (hiddenKbd) {
+            hiddenKbd.addEventListener('input', (e) => {
+                if (e.data && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send('key:text,' + e.data);
+                }
+                hiddenKbd.value = '';
+            });
+            hiddenKbd.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send('key:down,8');
+                    setTimeout(() => ws.send('key:up,8'), 30);
+                } else if (e.key === 'Enter' && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send('key:down,13');
+                    setTimeout(() => ws.send('key:up,13'), 30);
+                }
+            });
+        }
+
+        // --- Fit / Fill Stretch Mode Toggle ---
+        let isFillMode = false;
+        function toggleFitMode() {
+            isFillMode = !isFillMode;
+            const fitBtn = document.getElementById('fit-btn');
+            if (isFillMode) {
+                canvas.style.objectFit = 'fill';
+                if (fitBtn) fitBtn.innerText = '📺 Stretch (100%)';
+            } else {
+                canvas.style.objectFit = 'contain';
+                if (fitBtn) fitBtn.innerText = '📐 Fit (Aspect)';
+            }
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().then(() => {
+                    setTimeout(syncResolutionNow, 150);
+                }).catch(() => {
+                    syncResolutionNow();
+                });
+            } else {
+                document.exitFullscreen().then(() => {
+                    setTimeout(syncResolutionNow, 150);
+                }).catch(() => {});
+            }
+        }
+
+        let pillTimer = null;
+        function resetPillDimmer() {
+            const pill = document.getElementById('top-pill');
+            if (!pill) return;
+            pill.classList.remove('dimmed');
+            clearTimeout(pillTimer);
+            pillTimer = setTimeout(() => {
+                pill.classList.add('dimmed');
+            }, 3000);
+        }
+        window.addEventListener('pointermove', resetPillDimmer, { passive: true });
+        window.addEventListener('touchstart', resetPillDimmer, { passive: true });
+        resetPillDimmer();
+
+        function handleFullscreenState() {
+            const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            if (isFull) {
+                document.body.classList.add('is-fullscreen');
+            } else {
+                document.body.classList.remove('is-fullscreen');
+            }
+            setTimeout(syncResolutionNow, 200);
+        }
+        document.addEventListener('fullscreenchange', handleFullscreenState);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenState);
+        let resolutionSyncTimer;
+        function scheduleResolutionSync() {
+            clearTimeout(resolutionSyncTimer);
+            resolutionSyncTimer = setTimeout(syncResolutionNow, 200);
+        }
+        window.addEventListener('resize', scheduleResolutionSync);
+        window.addEventListener('orientationchange', scheduleResolutionSync);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') setTimeout(syncResolutionNow, 100);
+            // Returning from a backgrounded tab: Safari may have evicted decoder state, so
+            // ask the server to restart the encoder — the next frame is a fresh IDR and the
+            // delta chain can never reference frames the decoder no longer has.
+            if (document.visibilityState === 'visible' && authenticated && codecSelect.value === 'hevc' && ws && ws.readyState === WebSocket.OPEN) {
+                requestHevcKeyframe();
+            }
+        });
+
+        connectWs();
+        requestAnimationFrame(renderLoop);
+        setInterval(sendSync, 2000);
+        checkPwaPrompt();
+    </script>
+</body>
+</html>

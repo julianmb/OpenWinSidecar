@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0src\OpenWinSidecar.Console\bin\Debug\net10.0-windows\OpenWinSidecar.Console.exe"
+start "" "%~dp0src\OpenWinSidecar\bin\Debug\net10.0-windows\OpenWinSidecar.exe"

@@ -11,6 +11,25 @@ namespace OpenWinSidecar.Service.Protocol;
 /// </summary>
 public static class WebCodecsFraming
 {
+    public static byte[] BuildPacket(
+        byte codecType,
+        bool isKeyframe,
+        long timestampUs,
+        short curX,
+        short curY,
+        bool curVisible,
+        byte[] payload)
+    {
+        var packet = new byte[15 + payload.Length];
+        packet[0] = codecType;
+        packet[1] = (byte)((isKeyframe ? 0x01 : 0) | (curVisible ? 0x02 : 0));
+        BinaryPrimitives.WriteInt64BigEndian(packet.AsSpan(2, 8), timestampUs);
+        BinaryPrimitives.WriteInt16BigEndian(packet.AsSpan(10, 2), curX);
+        BinaryPrimitives.WriteInt16BigEndian(packet.AsSpan(12, 2), curY);
+        payload.CopyTo(packet, 15);
+        return packet;
+    }
+
     public static async Task SendPacketAsync(
         NetworkStream stream,
         SemaphoreSlim streamLock,
@@ -23,18 +42,12 @@ public static class WebCodecsFraming
         byte[] payload,
         CancellationToken token)
     {
-        var header = new byte[15 + payload.Length];
-        header[0] = codecType;
-        header[1] = (byte)((isKeyframe ? 0x01 : 0) | (curVisible ? 0x02 : 0));
-        BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(2, 8), timestampUs);
-        BinaryPrimitives.WriteInt16BigEndian(header.AsSpan(10, 2), curX);
-        BinaryPrimitives.WriteInt16BigEndian(header.AsSpan(12, 2), curY);
-        payload.CopyTo(header, 15);
+        var packet = BuildPacket(codecType, isKeyframe, timestampUs, curX, curY, curVisible, payload);
 
         await streamLock.WaitAsync(token);
         try
         {
-            await SendWsBinaryFrameAsync(stream, header, token);
+            await SendWsBinaryFrameAsync(stream, packet, token);
         }
         finally
         {
@@ -102,6 +115,108 @@ public static class WebCodecsFraming
         }
     }
 
+    /// <summary>
+    /// Prefix bytes a caller must reserve at the front of a reusable buffer: 15 for the
+    /// WebCodecs header plus up to 10 for the WebSocket length header. See
+    /// <see cref="SendBufferedBinaryAsync"/>.
+    /// </summary>
+    public const int MaxFrameHeaderBytes = 25;
+
+    /// <summary>
+    /// Writes the 15-byte WebCodecs header and the minimal WebSocket frame header into the
+    /// reserved space immediately in front of a payload that already lives at
+    /// <c>buffer[payloadStart..]</c> and returns the start offset and total frame length to
+    /// send. Pure (no I/O) so the wire layout is unit-testable.
+    /// </summary>
+    internal static (int wsStart, int totalLen) WriteHeaders(
+        byte[] buffer,
+        int payloadStart,
+        int payloadLen,
+        byte codecType,
+        bool isKeyframe,
+        long timestampUs,
+        short curX,
+        short curY,
+        bool curVisible)
+    {
+        int packetStart = payloadStart - 15;
+        buffer[packetStart] = codecType;
+        buffer[packetStart + 1] = (byte)((isKeyframe ? 0x01 : 0) | (curVisible ? 0x02 : 0));
+        BinaryPrimitives.WriteInt64BigEndian(buffer.AsSpan(packetStart + 2, 8), timestampUs);
+        BinaryPrimitives.WriteInt16BigEndian(buffer.AsSpan(packetStart + 10, 2), curX);
+        BinaryPrimitives.WriteInt16BigEndian(buffer.AsSpan(packetStart + 12, 2), curY);
+        buffer[packetStart + 14] = 0;
+
+        // The WebSocket payload is the 15-byte WebCodecs header plus the media payload.
+        int wsPayloadLen = 15 + payloadLen;
+        int wsHeaderLen;
+        int wsStart;
+        if (wsPayloadLen <= 125)
+        {
+            wsHeaderLen = 2;
+            wsStart = packetStart - 2;
+            buffer[wsStart] = 0x82;
+            buffer[wsStart + 1] = (byte)wsPayloadLen;
+        }
+        else if (wsPayloadLen <= 65535)
+        {
+            wsHeaderLen = 4;
+            wsStart = packetStart - 4;
+            buffer[wsStart] = 0x82;
+            buffer[wsStart + 1] = 126;
+            buffer[wsStart + 2] = (byte)(wsPayloadLen >> 8);
+            buffer[wsStart + 3] = (byte)(wsPayloadLen & 0xFF);
+        }
+        else
+        {
+            wsHeaderLen = 10;
+            wsStart = packetStart - 10;
+            buffer[wsStart] = 0x82;
+            buffer[wsStart + 1] = 127;
+            BinaryPrimitives.WriteInt64BigEndian(buffer.AsSpan(wsStart + 2, 8), wsPayloadLen);
+        }
+
+        return (wsStart, wsHeaderLen + wsPayloadLen);
+    }
+
+    /// <summary>
+    /// Sends a binary frame whose payload already lives at
+    /// <c>buffer[payloadStart .. payloadStart + payloadLen)</c>, writing the 15-byte WebCodecs
+    /// header and the minimal WebSocket header into the reserved space immediately in front of
+    /// it and emitting everything as one socket write. This removes the per-frame
+    /// <c>BuildPacket</c> allocation and the <c>payload.CopyTo</c> that the legacy path paid for
+    /// every JPEG frame. <paramref name="payloadStart"/> must be at least
+    /// <see cref="MaxFrameHeaderBytes"/>.
+    /// </summary>
+    public static async Task SendBufferedBinaryAsync(
+        NetworkStream stream,
+        SemaphoreSlim streamLock,
+        byte[] buffer,
+        int payloadStart,
+        int payloadLen,
+        byte codecType,
+        bool isKeyframe,
+        long timestampUs,
+        short curX,
+        short curY,
+        bool curVisible,
+        CancellationToken token)
+    {
+        var (wsStart, totalLen) = WriteHeaders(
+            buffer, payloadStart, payloadLen, codecType, isKeyframe, timestampUs, curX, curY, curVisible);
+
+        await streamLock.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            await stream.WriteAsync(buffer.AsMemory(wsStart, totalLen), token).ConfigureAwait(false);
+            await stream.FlushAsync(token).ConfigureAwait(false);
+        }
+        finally
+        {
+            streamLock.Release();
+        }
+    }
+
     public static async Task SendWsBinaryFrameAsync(NetworkStream stream, byte[] payload, CancellationToken token)
     {
         byte[] header;
@@ -121,8 +236,18 @@ public static class WebCodecsFraming
             BinaryPrimitives.WriteInt64BigEndian(header.AsSpan(2, 8), payload.Length);
         }
 
-        await stream.WriteAsync(header, token);
-        await stream.WriteAsync(payload, token);
+        if (payload.Length <= 65535)
+        {
+            var combined = new byte[header.Length + payload.Length];
+            Buffer.BlockCopy(header, 0, combined, 0, header.Length);
+            Buffer.BlockCopy(payload, 0, combined, header.Length, payload.Length);
+            await stream.WriteAsync(combined, token);
+        }
+        else
+        {
+            await stream.WriteAsync(header, token);
+            await stream.WriteAsync(payload, token);
+        }
         await stream.FlushAsync(token);
     }
 }

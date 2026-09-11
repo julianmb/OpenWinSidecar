@@ -51,8 +51,8 @@ OpenWinSidecar/
 │   │   ├── Capture/ScreenCaptureService.cs     # GDI fallback & watermark compositor
 │   │   ├── Encoding/HevcQsvStreamEncoder.cs    # Intel Arc QSV HEVC hardware encoder
 │   │   ├── Input/InputDispatcher.cs            # Win32 SendInput mouse & keyboard dispatcher
-│   │   └── Protocol/SpacedeskTcpServer.cs      # Multi-port HTTP/WebSocket server & HTML5 client
-│   ├── OpenWinSidecar.Console/       # WPF Management Dashboard & System Tray
+│   │   └── Protocol/SidecarTcpServer.cs        # Multi-port HTTP/WebSocket server & HTML5 client
+│   ├── OpenWinSidecar/               # WPF Management Dashboard & System Tray
 │   └── OpenWinSidecar.Cli/           # Command-Line Automation Tool
 ├── drivers/VDD/                     # Signed IddCx Virtual Display Driver (ROOT\DISPLAY\0000)
 │   └── vdd_settings.xml             # Complete iPad native and logical resolution matrix

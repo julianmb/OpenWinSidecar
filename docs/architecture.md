@@ -63,7 +63,7 @@ graph TD
 
 ## 2. Core Subsystems
 
-### 2.1 Smart 3rd Screen Power Lifecycle (`VirtualDisplayManager` & `SpacedeskManager`)
+### 2.1 Smart 3rd Screen Power Lifecycle (`VirtualDisplayManager` & `SidecarManager`)
 - **Driver Enablement / Disablement**: Manages device node `ROOT\DISPLAY\0000` via `pnputil.exe` and `devcon.exe`.
 - **Automated Workflow**:
   - `EnableVirtualDisplayAndStartService()`: Enables driver, extends Windows desktop via `displayswitch.exe /extend` and `SetDisplayConfig`, and starts the streaming server.
@@ -90,7 +90,7 @@ graph TD
 - Streams hardware-accurate Windows cursor directly in the video frame with zero lag or duplicate pointer artifacts.
 - Supports switching between Streamed Host Cursor, Touch Tablet Mode, and Native Browser Cursor.
 
-### 2.6 Safari & iPadOS Low-Latency Web Client (`SpacedeskTcpServer`)
+### 2.6 Safari & iPadOS Low-Latency Web Client (`SidecarTcpServer`)
 - **WebCodecs:** `VideoDecoder` configured with `hardwareAcceleration: 'prefer-hardware'` and `optimizeForLatency: true`.
 - **Framebuffer:** Canvas initialized with `{ desynchronized: true }` to bypass the browser compositor queue.
 - **Input Batching:** `requestAnimationFrame` single-finger and two-finger gesture dispatching.
