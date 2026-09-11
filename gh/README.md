@@ -10,7 +10,7 @@
 
 **An open-source Windows virtual display that streams to your iPad's browser — no client app, no subscription.**
 
-Turn an iPad into a real extra Windows monitor: true "Extend display" via a virtual display driver, hardware H.265 streaming, full touch and keyboard input — straight from Safari. Other modern browsers and devices are expected to work (the stack is web-standard), but **only iPad Safari has been tested so far**.
+Turn an iPad into a real extra Windows monitor: true "Extend display" via a virtual display driver, hardware H.265 streaming, full touch and keyboard input — straight from Safari. Tested on **Windows 11 with an Intel GPU**; it should work elsewhere too (other Windows versions, other GPUs, other browsers) — but you're the tester there, so please open an issue and let me know how it goes.
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Why this exists](#why-this-exists) · [Features](#features) · [Architecture](docs/architecture.md) · [Troubleshooting](docs/troubleshooting-and-faq.md)
 
@@ -20,9 +20,9 @@ Turn an iPad into a real extra Windows monitor: true "Extend display" via a virt
 
 ## Why this exists
 
-Apple's Sidecar is a beautiful thing — a Mac turns an iPad into a wireless second monitor with almost no setup. Windows has nothing like it built in. The commercial alternatives are closed-source, subscription-priced, CPU-hungry, or all three.
+I wanted to use my iPad as a second screen on Windows. I looked at what was available and didn't like the options — closed-source, subscription-priced, CPU-hungry, or all three — so I built my own.
 
-OpenWinSidecar is the open answer, built on a simple idea: **an iPad already has a great hardware video decoder and a great screen — Safari just needs the right bytes.** So the project streams a *real Windows virtual display* (a genuine extend-mode monitor, not a mirror) to Safari using hardware HEVC and WebCodecs, with input injection back into Windows. No App Store download, no per-feature subscription, no opaque binaries.
+The core idea is simple: **an iPad already has a great hardware video decoder and a great screen — Safari just needs the right bytes.** So this streams a *real Windows virtual display* (a genuine extend-mode monitor, not a mirror) to Safari using hardware HEVC and WebCodecs, with input injection back into Windows. No App Store download, no per-feature subscription, no opaque binaries.
 
 | | OpenWinSidecar | Sidecar | Commercial Windows tools |
 |---|---|---|---|
@@ -35,23 +35,34 @@ OpenWinSidecar is the open answer, built on a simple idea: **an iPad already has
 
 ## Quick start
 
-**Requirements:** Windows 10/11 with an Intel GPU with Quick Sync (Arc / Iris Xe / integrated), .NET 10 SDK, and any device with a modern browser on the same network.
+**You need:** a Windows 10/11 PC, the .NET 10 SDK, an iPad (or any modern browser) on the same network — plus the two one-time installs below.
+
+### 1. Install the virtual display driver (once, as Administrator)
+
+Right-click `drivers/VDD/install_driver.bat` → **Run as administrator**. This creates the real extra monitor that Windows will extend onto. No reboot needed. If the display doesn't appear, see [drivers-and-virtual-monitors.md](docs/drivers-and-virtual-monitors.md).
+
+### 2. Install FFmpeg (once)
+
+```powershell
+winget install --id Gyan.FFmpeg -e
+```
+
+Take the full build, not Essentials — the hardware HEVC encoder needs it. The app finds it on PATH by itself; if you just installed it, open a fresh terminal first.
+
+### 3. Build and run
 
 ```powershell
 git clone <this repo>
 cd OpenWinSidecar
 dotnet build OpenWinSidecar.slnx
-
-# 1. Install the virtual display driver (once; admin)
-#    drivers/VDD/install_driver.bat
-
-# 2. Start the app (installs the tray app, manages everything)
 dotnet run --project src/OpenWinSidecar
 ```
 
-Then on the iPad: **scan the QR code** shown in the console (or open `http://<your-pc-ip>:8080` in Safari) → Share → **Add to Home Screen** for a borderless fullscreen experience. Windows now has an extra display in Settings, and the iPad shows it — move windows onto it like any monitor.
+(Or run `run_console.bat` after building.) The streaming service needs elevation for GPU capture — use `run_service_admin.bat` if it asks — and Windows Firewall may prompt on first launch; allow it on private networks.
 
-> **First-run note:** the streaming service must run elevated for GPU capture (`run_service_admin.bat`), and the firewall may prompt on first launch.
+### 4. Connect the iPad
+
+**Scan the QR code** shown in the console (or open `http://<your-pc-ip>:8080` in Safari) → Share → **Add to Home Screen** for a borderless fullscreen experience. Windows now has an extra display in Settings, and the iPad shows it — move windows onto it like any monitor.
 
 ## How it works
 
@@ -114,7 +125,7 @@ docs/                      # architecture, protocols, troubleshooting
 
 ## Device support
 
-The server is browser-agnostic — anything with a modern browser can connect. **iPad / Safari is the tested target**; the rest is expected to work based on standards support, with the codec chosen automatically per device (hardware HEVC where available, JPEG otherwise).
+The server is browser-agnostic — anything with a modern browser can connect. Tested combination: **Windows 11 + Intel GPU (Quick Sync) → iPad Safari**. Everything else below is expected to work based on standards support, with the codec chosen automatically per device (hardware HEVC where available, JPEG otherwise) — if you run one of these, open an issue and tell me how it went so the row can move to ✅.
 
 | Device / browser | Status | Video path |
 |---|---|---|
@@ -129,8 +140,8 @@ The client probes `VideoDecoder.isConfigSupported` on connect and picks the code
 
 ## Limitations & status
 
-- **Windows-only server** (the driver and capture stack are inherently Win32); clients are anything with a browser
-- Hardware encoding currently targets **Intel Quick Sync** (Arc / Iris Xe / integrated graphics); NVENC/AMF are natural follow-ups
+- **Windows-only server** (the driver and capture stack are inherently Win32); clients are anything with a browser. Tested on **Windows 11** — Windows 10 should work, unconfirmed
+- Hardware encoding is proven on **Intel Quick Sync** (Arc / Iris Xe / integrated graphics); NVIDIA (NVENC) and AMD (AMF) paths exist in code but are unvalidated — try them and report back
 - Audio streaming, Apple Pencil pressure, and AV1 are on the roadmap, not yet implemented
 - The virtual display driver is MikeTheTech's [Virtual Display Driver](https://github.com/itsmiketyy/VirtualDisplayDriver) — installed separately, licensed per its own terms
 
