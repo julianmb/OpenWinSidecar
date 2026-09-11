@@ -12,7 +12,7 @@
 
 Turn an iPad into a real extra Windows monitor: true "Extend display" via a virtual display driver, hardware H.265 streaming, full touch and keyboard input — straight from Safari. Tested on **Windows 11 with an Intel GPU**; it should work elsewhere too (other Windows versions, other GPUs, other browsers) — but you're the tester there, so please open an issue and let me know how it goes.
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Why this exists](#why-this-exists) · [Features](#features) · [Architecture](docs/architecture.md) · [Troubleshooting](docs/troubleshooting-and-faq.md)
+[Quick start](#quick-start) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Why this exists](#why-this-exists) · [Features](#features) · [Architecture](docs/architecture.md) · [Troubleshooting](docs/troubleshooting-and-faq.md)
 
 </div>
 
@@ -63,6 +63,14 @@ dotnet run --project src/OpenWinSidecar
 ### 4. Connect the iPad
 
 **Scan the QR code** shown in the console (or open `http://<your-pc-ip>:8080` in Safari) → Share → **Add to Home Screen** for a borderless fullscreen experience. Windows now has an extra display in Settings, and the iPad shows it — move windows onto it like any monitor.
+
+## Screenshots
+
+The Windows console — streaming state, live session stats, connected clients, QR connect:
+
+![OpenWinSidecar console](docs/images/console.png)
+
+> Using it on an iPad? A photo of your setup would look great here — open an issue to share one.
 
 ## How it works
 
