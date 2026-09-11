@@ -36,3 +36,9 @@ ehthumbs.db
 
 ## Diagnostics / logs
 *.log
+
+## Heavy upstream bundles (use the extracted files under drivers/VDD instead)
+drivers/VDD/vdd_control.zip
+drivers/VDD/vdd_x64.zip
+drivers/VDD/control/VDD Control.exe
+drivers/VDD/control/VDD Control.pdb

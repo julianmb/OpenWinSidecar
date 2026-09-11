@@ -143,7 +143,7 @@ The client probes `VideoDecoder.isConfigSupported` on connect and picks the code
 - **Windows-only server** (the driver and capture stack are inherently Win32); clients are anything with a browser. Tested on **Windows 11** — Windows 10 should work, unconfirmed
 - Hardware encoding is proven on **Intel Quick Sync** (Arc / Iris Xe / integrated graphics); NVIDIA (NVENC) and AMD (AMF) paths exist in code but are unvalidated — try them and report back
 - Audio streaming, Apple Pencil pressure, and AV1 are on the roadmap, not yet implemented
-- The virtual display driver is MikeTheTech's [Virtual Display Driver](https://github.com/itsmiketyy/VirtualDisplayDriver) — installed separately, licensed per its own terms
+- The virtual display driver is MikeTheTech's [Virtual Display Driver](https://github.com/itsmiketyy/VirtualDisplayDriver) — the driver itself is bundled under `drivers/VDD` (MIT-licensed project, driver files retain their own terms). The upstream control-panel GUI is not bundled (163 MB); grab it from their releases if you want it — the app manages the driver on its own
 
 ## Contributing
 
