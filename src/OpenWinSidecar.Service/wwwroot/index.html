@@ -1638,31 +1638,49 @@
         }
 
         // --- Single-finger touch / mouse (Immediate dispatch, 6ms throttle ceiling) ---
+        // Gesture ownership: the viewer chrome (FPS pill, settings modal, buttons, selects)
+        // lives inside #container next to the canvas, so raw container-level handlers would
+        // forward taps on fullscreen/settings/etc. as clicks to the desktop behind ("ghost
+        // clicks"). Only a gesture that STARTS on the canvas may inject input; its moves and
+        // release are then honored wherever the pointer ends up (so sliding off the canvas
+        // mid-drag can never leave a stuck button down on Windows).
         let isDown = false;
         let lastMoveSent = 0;
+        let gesturePointerId = null;
 
         container.addEventListener('pointerdown', (e) => {
+            if (e.target !== canvas) return;
+            gesturePointerId = e.pointerId;
             isDown = true;
             lastMoveSent = performance.now();
             sendInput('down', e);
         }, { passive: true });
 
         container.addEventListener('pointermove', (e) => {
-            if (isDown || e.pointerType === 'mouse' || e.pointerType === 'pen') {
-                const now = performance.now();
-                if (now - lastMoveSent >= 6) {
-                    lastMoveSent = now;
-                    sendInput('move', e);
-                }
+            if (!isDown) {
+                // Hover (mouse/pen only): canvas only.
+                if (e.pointerType !== 'mouse' && e.pointerType !== 'pen') return;
+                if (e.target !== canvas) return;
+            } else if (e.pointerId !== gesturePointerId) {
+                return; // a second finger/button that didn't start on the canvas
+            }
+            const now = performance.now();
+            if (now - lastMoveSent >= 6) {
+                lastMoveSent = now;
+                sendInput('move', e);
             }
         }, { passive: true });
 
         container.addEventListener('pointerup', (e) => {
+            if (e.pointerId !== gesturePointerId) return;
+            gesturePointerId = null;
             isDown = false;
             sendInput('up', e);
         }, { passive: true });
 
         container.addEventListener('pointercancel', (e) => {
+            if (e.pointerId !== gesturePointerId) return;
+            gesturePointerId = null;
             isDown = false;
             sendInput('up', e);
         }, { passive: true });
@@ -1671,16 +1689,18 @@
         let lastTouchY = 0;
         let lastTouchCount = 0;
         let twoFingerStart = 0;
+        let twoFingerOnCanvas = false;
         container.addEventListener('touchstart', (e) => {
             lastTouchCount = e.touches.length;
             if (e.touches.length === 2) {
+                twoFingerOnCanvas = (e.target === canvas);
                 lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
                 twoFingerStart = performance.now();
                 e.preventDefault();
             }
         }, { passive: false });
         container.addEventListener('touchmove', (e) => {
-            if (e.touches.length === 2 && ws && ws.readyState === WebSocket.OPEN) {
+            if (twoFingerOnCanvas && e.touches.length === 2 && ws && ws.readyState === WebSocket.OPEN) {
                 const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
                 const delta = Math.round((lastTouchY - avgY) * 3);
                 if (Math.abs(delta) > 2) {
@@ -1691,17 +1711,20 @@
             }
         }, { passive: false });
         container.addEventListener('touchend', (e) => {
-            if (lastTouchCount === 2 && e.touches.length === 0) {
+            if (twoFingerOnCanvas && lastTouchCount === 2 && e.touches.length === 0) {
                 const elapsed = performance.now() - twoFingerStart;
                 if (elapsed < 300 && ws && ws.readyState === WebSocket.OPEN) {
                     ws.send('rightclick');
                 }
             }
+            if (e.touches.length === 0) twoFingerOnCanvas = false;
             lastTouchCount = e.touches.length;
         }, { passive: true });
 
-        // --- Mouse wheel (desktop browser) ---
+        // --- Mouse wheel (desktop browser; canvas only so scrolling the settings modal
+        // doesn't scroll Windows behind it) ---
         container.addEventListener('wheel', (e) => {
+            if (e.target !== canvas) return;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send('scroll:' + Math.round(-e.deltaY));
             }

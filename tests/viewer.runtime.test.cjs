@@ -15,7 +15,9 @@ function viewer() {
         if (!elements.has(id)) elements.set(id, {
             value: id === 'codec-select' ? 'hevc' : id === 'res-select' ? '2360x1640' : '0',
             width: 64, height: 48, style: { setProperty() {} },
-            classList: { add() {}, remove() {}, toggle() {} }, addEventListener() {},
+            classList: { add() {}, remove() {}, toggle() {} },
+            addEventListener(type, fn) { ((this._h = this._h || {})[type] = (this._h[type] || [])).push(fn); },
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 64, height: 48 }),
             getContext: type => type === 'webgl2' ? null : { drawImage(source) {
                 assert.equal(source.closed, false, 'drawable was closed before paint');
                 draws.push(source);
@@ -122,6 +124,63 @@ test('lost-reference recovery skips deltas and retries a rate-limited keyframe r
     assert.deepEqual(v.sockets[0].sent, ['forceidr', 'forceidr']);
     assert.equal(v.decoders[0].chunks.length, 1);
     assert.equal(v.run('needsHevcKeyframe'), false);
+});
+
+function fireInput(v, type, ev) {
+    v.run("ws = new WebSocket('ws://test')");
+    const handlers = v.run(`(() => { const c = document.getElementById('container'); return c._h['${type}']; })()`);
+    for (const fn of handlers) fn(ev);
+    return v.sockets[v.sockets.length - 1].sent;
+}
+
+function canvasOf(v) { return v.run('canvas'); }
+function uiOf(v) { return v.run("document.getElementById('ui-btn')"); }
+const point = (target, extra = {}) => Object.assign(
+    { target, pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 10, preventDefault() {} }, extra);
+
+test('taps on viewer chrome never inject input to the desktop', () => {
+    const v = viewer();
+    const ui = uiOf(v);
+    let sent = fireInput(v, 'pointerdown', point(ui));
+    assert.ok(!sent.some(m => m.startsWith('input:')), 'UI tap must not send input, got: ' + sent);
+    sent = fireInput(v, 'pointermove', point(ui, { pointerType: 'mouse' }));
+    assert.ok(!sent.some(m => m.startsWith('input:')), 'UI hover must not send input, got: ' + sent);
+    sent = fireInput(v, 'wheel', { target: ui, deltaY: 100, preventDefault() {} });
+    assert.ok(!sent.some(m => m.startsWith('scroll:')), 'UI wheel must not scroll Windows, got: ' + sent);
+});
+
+test('canvas gestures inject, and release off-canvas still lifts the button', () => {
+    const v = viewer();
+    const cv = canvasOf(v);
+    const ui = uiOf(v);
+    let sent = fireInput(v, 'pointerdown', point(cv));
+    assert.ok(sent.some(m => m.startsWith('input:down,')), 'canvas tap must send down, got: ' + sent);
+    // Finger slides onto the pill, then lifts there: the up must still go through,
+    // or Windows would keep a stuck button held down.
+    sent = fireInput(v, 'pointerup', point(ui));
+    assert.ok(sent.some(m => m.startsWith('input:up,')), 'off-canvas release must send up, got: ' + sent);
+    // A tap that started on UI must not produce an up either.
+    sent = fireInput(v, 'pointerup', point(ui, { pointerId: 9 }));
+    assert.ok(!sent.some(m => m.startsWith('input:')), 'UI-only gesture must stay silent, got: ' + sent);
+});
+
+test('two-finger scroll starting on UI never scrolls Windows', () => {
+    const v = viewer();
+    const ui = uiOf(v);
+    const touch = (target, ys) => ({
+        target, preventDefault() {},
+        touches: ys.map(y => ({ clientX: 10, clientY: y })),
+    });
+    let sent = fireInput(v, 'touchstart', touch(ui, [10, 30]));
+    sent = fireInput(v, 'touchmove', touch(ui, [0, 20]));
+    assert.ok(!sent.some(m => m.startsWith('scroll:')), 'UI scroll must not reach Windows, got: ' + sent);
+    sent = fireInput(v, 'touchend', { target: ui, touches: [], preventDefault() {} });
+    assert.ok(!sent.some(m => m === 'rightclick'), 'UI tap must not right-click Windows, got: ' + sent);
+
+    const cv = canvasOf(v);
+    sent = fireInput(v, 'touchstart', touch(cv, [10, 30]));
+    sent = fireInput(v, 'touchmove', touch(cv, [0, 10]));
+    assert.ok(sent.some(m => m.startsWith('scroll:')), 'canvas scroll must reach Windows, got: ' + sent);
 });
 
 test('a single decoder error rebuilds the decoder and resyncs instead of degrading', () => {

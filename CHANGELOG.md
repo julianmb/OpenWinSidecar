@@ -4,6 +4,16 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-11 — Viewer ghost clicks: UI taps no longer reach the desktop
+
+### Fixed
+- Taps on viewer chrome (FPS pill, settings modal, fullscreen/keyboard buttons, selects) bubbled to the `#container` pointer handlers and were forwarded as `input:` clicks to Windows — e.g. opening fullscreen/settings also clicked the desktop behind. Only gestures **starting** on the canvas now inject: `pointerdown` requires `e.target === canvas`, moves require hover-on-canvas or the owning `pointerId`, and `pointerup`/`cancel` honor the owning pointer even if it lifts over UI (no stuck buttons). Two-finger scroll/right-click and wheel are canvas-gated the same way. Taps on the modal backdrop are now intentionally inert.
+
+### Verified
+- 3 new viewer runtime tests (UI tap/hover/wheel silent; canvas tap + off-canvas release still sends down+up; canvas two-finger scroll works, UI doesn't). **11/11 JS + 45/45 .NET pass.** App restarted with the fix (viewer is embedded — **reload the iPad page** to pick it up).
+
+---
+
 ## 2026-09-11 — Server-side pacing + adaptive half-res motion encode
 
 ### Added — paced AU release (closes the received→painted gap)
