@@ -33,3 +33,6 @@ scratch_*.png
 Thumbs.db
 ehthumbs.db
 [Dd]esktop.ini
+
+## Diagnostics / logs
+*.log

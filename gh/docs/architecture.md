@@ -32,13 +32,15 @@ graph TD
 
         subgraph NetworkSubsystem["Multi-Port Transport"]
             HTTP["Multi-Port Listener (Ports 80, 8080, 28252)"]
+            AUTH["Access-Password Gate (auth handshake, pw-guarded /input)"]
             WS["WebSocket Binary Framing (SemaphoreSync)"]
             INP["Win32 SendInput (InputDispatcher)"]
             
             QSV --> WS
             JPEG --> WS
-            WS --> HTTP
-            HTTP --> INP
+            WS --> AUTH
+            AUTH --> INP
+            HTTP --> AUTH
         end
     end
 
@@ -93,3 +95,39 @@ graph TD
 - **Framebuffer:** Canvas initialized with `{ desynchronized: true }` to bypass the browser compositor queue.
 - **Input Batching:** `requestAnimationFrame` single-finger and two-finger gesture dispatching.
 - **PWA Mode:** Fullscreen standalone web app without Safari navigation bars.
+
+---
+
+## 3. Fan-Out Broadcast Architecture (September 2026 refactor)
+
+Before this refactor, every connected WebSocket client ran its **own** capture loop over *shared* capture service instances — concurrent `AcquireNextFrame` calls on one duplication object are invalid DXGI and thrash with two or more clients, and a slow client accumulated unbounded latency in its TCP buffer.
+
+### 3.1 Data flow
+
+```
+FrameBroadcastHub (one per service)
+├── DisplayCaptureProducer  (one per distinct display device, e.g. \\.\DISPLAY86)
+│     ├── capture tick (~60/s): DXGI AcquireNextFrame(0) → reusable native Bitmap
+│     │     ├── static desktop → no frames ever presented → GDI seed (DDB blit, 1180-wide)
+│     │     └── DXGI hard-failure → GDI path, time-based retry every 2s
+│     └── compose per idle sink: DrawImage crop/scale + cursor stamp → signal
+└── ClientFrameSink  (one per WebSocket client)
+      ├── consumer loop: WaitFrame → JPEG-encode (IntraTurbo label) or HEVC push
+      └── own ffmpeg hevc_qsv process; NALs → WebCodecs packets
+```
+
+### 3.2 Threading & backpressure model
+- **Producer** composes into a sink's bitmap only when the sink is idle (`Interlocked` busy-handoff): a slow client **drops frames** (drop-oldest) instead of queueing latency. No frame-buffer sharing, no refcounting — the busy flag is the lifetime guarantee.
+- **Timestamps** are real capture-time microseconds from a shared `Stopwatch` (previously fabricated `frameIndex * 16666`); HEVC NAL packets dequeue the queued capture timestamp (`-bf 0` preserves order).
+- **Codec labels are honest**: JPEG payload is always `codecType=0 (IntraTurbo)` even if the client asked for h264/av1; the server sends a `codec:intra` text notice when the QSV encoder cannot start so the client UI can sync.
+- **Topology safety**: `EnableExtendMode()` runs once per process (re-flashing `SetDisplayConfig` per session invalidated live duplication handles with `E_INVALIDARG` and flickered all monitors).
+- **Timer resolution**: `timeBeginPeriod(1)` at startup — without it the 60 FPS pacing quantizes to ~30 FPS on the default 15.6 ms scheduler tick.
+
+### 3.3 Measured results (2560×1440 VDD → 1180-wide stream, localhost)
+| Path | Before | After |
+|---|---|---|
+| JPEG intra, 1 client | 15–25 FPS (GDI per-client) | **57 FPS** |
+| JPEG intra, 2 clients | thrashing / broken | **48 FPS each** |
+| HEVC hevc_qsv | mis-sized frames (native BGRA into W×H encoder) | **49 FPS**, correct GOP, ~0.2 Mbps static |
+| Capture tick | — | 0.1–3.5 ms DXGI / ~35 ms GDI (DDB) |
+

@@ -157,8 +157,9 @@ public final class VideoPipeline {
         return true
     }
 
-    /// Decodes a 4-byte length-prefixed NAL unit packet
-    public func decodeChunk(data: Data, timestampUs: Int64) {
+    /// Decodes one access unit of 4-byte length-prefixed NAL units. Keyframes are marked as sync
+    /// samples so the decoder can resynchronize cleanly after a fresh IDR.
+    public func decodeChunk(data: Data, timestampUs: Int64, isKeyframe: Bool) {
         guard let session = decompressionSession, let format = formatDescription else { return }
 
         let dataLength = data.count
@@ -206,6 +207,11 @@ public final class VideoPipeline {
         )
 
         guard sampleStatus == noErr, let validSampleBuffer = sampleBuffer else { return }
+
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(validSampleBuffer, createIfNecessary: true) as? NSMutableArray,
+           let dict = attachments.firstObject as? NSMutableDictionary {
+            dict[kCMSampleAttachmentKey_NotSync as String] = isKeyframe ? kCFBooleanFalse : kCFBooleanTrue
+        }
 
         var flagsOut: VTDecodeInfoFlags = []
         VTDecompressionSessionDecodeFrame(

@@ -1,0 +1,45 @@
+name: Build & Test (.NET)
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'OpenWinSidecar.slnx'
+      - '.github/workflows/dotnet-ci.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build + unit tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore OpenWinSidecar.slnx
+
+      - name: Build (Release)
+        run: dotnet build OpenWinSidecar.slnx --no-restore -c Release
+
+      - name: Test
+        run: >
+          dotnet test tests/OpenWinSidecar.Service.Tests/OpenWinSidecar.Service.Tests.csproj
+          --no-build -c Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/test-results.trx'

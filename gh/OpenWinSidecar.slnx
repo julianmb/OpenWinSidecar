@@ -5,4 +5,7 @@
     <Project Path="src/OpenWinSidecar.Core/OpenWinSidecar.Core.csproj" />
     <Project Path="src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenWinSidecar.Service.Tests/OpenWinSidecar.Service.Tests.csproj" />
+  </Folder>
 </Solution>

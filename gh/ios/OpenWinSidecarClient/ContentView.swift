@@ -3,6 +3,8 @@ import SwiftUI
 public struct ContentView: View {
     @StateObject private var viewModel = ContentViewModel()
     @State private var showSettings = false
+    @State private var passwordInput = ""
+    @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
 
@@ -43,6 +45,16 @@ public struct ContentView: View {
                     .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
                     .shadow(color: .black.opacity(0.4), radius: 10, y: 5)
                     .padding(.top, 12)
+
+                    if let notice = viewModel.serverNotice {
+                        Text(notice)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.85))
+                            .clipShape(Capsule())
+                    }
 
                     Spacer()
                 }
@@ -140,6 +152,43 @@ public struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsSheet(viewModel: viewModel)
         }
+        .sheet(isPresented: $viewModel.needsPassword) {
+            NavigationStack {
+                Form {
+                    Section("This screen is password protected") {
+                        SecureField("Password", text: $passwordInput)
+                    }
+                    if let authError = viewModel.authError {
+                        Text(authError).foregroundColor(.red)
+                    }
+                }
+                .navigationTitle("Password")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            passwordInput = ""
+                            viewModel.needsPassword = false
+                            viewModel.disconnect()
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Watch") {
+                            viewModel.connection.submitPassword(passwordInput)
+                            passwordInput = ""
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+        .onChange(of: scenePhase) { newPhase in
+            // Returning from background: Safari-style decoders may have dropped reference frames,
+            // so ask for a fresh IDR rather than showing corruption until the next keyframe.
+            if newPhase == .active && viewModel.isConnected {
+                viewModel.connection.sendForceIdr()
+            }
+        }
     }
 }
 
@@ -151,6 +200,9 @@ final class ContentViewModel: ObservableObject {
     @Published var isConnected = false
     @Published var currentFps = 0
     @Published var errorMessage: String?
+    @Published var needsPassword = false
+    @Published var authError: String?
+    @Published var serverNotice: String?
 
     let connection = StreamConnection()
 
@@ -165,6 +217,32 @@ final class ContentViewModel: ObservableObject {
             self?.isConnected = false
             if let r = reason {
                 self?.errorMessage = "Disconnected: \(r)"
+            }
+        }
+        connection.onFpsUpdate = { [weak self] fps in
+            DispatchQueue.main.async { self?.currentFps = fps }
+        }
+        connection.onAuthRequired = { [weak self] in
+            DispatchQueue.main.async {
+                self?.authError = nil
+                self?.needsPassword = true
+            }
+        }
+        connection.onAuthFailed = { [weak self] in
+            DispatchQueue.main.async { self?.authError = "Wrong password — try again." }
+        }
+        connection.onAuthenticated = { [weak self] in
+            DispatchQueue.main.async {
+                self?.needsPassword = false
+                self?.authError = nil
+            }
+        }
+        connection.onCodecFallback = { [weak self] in
+            DispatchQueue.main.async {
+                self?.serverNotice = "Server encoder busy — video paused"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                    self?.serverNotice = nil
+                }
             }
         }
     }
@@ -252,6 +330,13 @@ struct SettingsSheet: View {
                     }
                     Button("150%") { viewModel.connection.sendText("dpi:150") }
                     Button("200%") { viewModel.connection.sendText("dpi:200") }
+                }
+
+                Section("Quality") {
+                    Button("50% — fastest") { viewModel.connection.sendText("quality:50") }
+                    Button("65% — balanced") { viewModel.connection.sendText("quality:65") }
+                    Button("80% — high detail") { viewModel.connection.sendText("quality:80") }
+                    Button("90% — ultra crisp") { viewModel.connection.sendText("quality:90") }
                 }
 
                 Section("Stream Control") {
