@@ -4,6 +4,24 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-11 — Server-side pacing + adaptive half-res motion encode
+
+### Added — paced AU release (closes the received→painted gap)
+- `SendHevcPacketAsync` releases access units on an even TargetFramerate cadence (leaky-bucket: late frames go immediately, early ones wait for their slot). Bursty QSV completion no longer wastes client vsyncs two-at-once-then-starve. Pacer waits don't count toward network backpressure.
+- Measured on cursor motion: painted **44–46fps (new best, was 40–43)**, presentation-wait ~4ms (was ~6ms), latency +~10ms (expected pacing cost; fluidity-first call stands).
+
+### Added — adaptive half-res encode during sustained motion
+- Leaky motion score over capture activity: ~150ms of continuous pixel change engages half size (1180×820), ~250ms calm releases to full for crisp text. Cursor-only motion never engages (no pixel updates). Hysteresis bounds switches; each switch restarts the encoder once with a fresh IDR.
+- `SIDECAR_ADAPTIVE_SCALE=0` pins full-res (escape hatch + A/B).
+- **Coalescing bug found by measurement and fixed:** bitrate pinning applied across geometry changes, so the switch ran half-res at the full-res bitrate for 30s then restarted a second time. Now geometry always applies immediately with the correct bitrate; pure bitrate changes go down immediately (congestion relief urgent) and hold upward ones 30s.
+
+### Measured (including a bisect)
+- Adaptive OFF: 57fps sustained loopback, iPad painted up to 49fps, zero stalls.
+- Adaptive ON steady state: **perfect 60fps windows, ~19ms gaps, zero >40ms stalls on both sinks**; zero AUs over 100KB (micro-stop fix holds); iPad 43–51fps received at ~75–90ms.
+- Honest caveat: a post-restart BRC warmup transient was observed (fast at generous operating points, up to ~85s at tight half-res on synthetic full-frame torture content). Self-resolving, no flapping, no mid-run restarts; desktop-typical motion is far easier than the test pattern. Watched, not yet fully explained — revisit if real use shows slow settling.
+
+---
+
 ## 2026-09-11 — Killed the ~1s micro-stop; quality-constant controls; Main10 opt-in; 4:4:4 ruled out
 
 ### Diagnosed (Phase 0, measured)

@@ -169,6 +169,17 @@ public sealed class ClientFrameSink : IDisposable
     private int _hevcSendsInFlight;
     private readonly object _encoderLock = new(); // serializes consumer inits with setup-time warmup
 
+    // ---- adaptive encode scale (fluidity-first): sustained pixel motion encodes at half
+    // size, calm returns to full size for crisp text. Leaky score with split thresholds gives
+    // hysteresis: ~150ms of continuous change to engage, ~250ms calm to release. Cursor-only
+    // motion never engages (DXGI reports no pixel update for cursor moves).
+    // Kill-switch: SIDECAR_ADAPTIVE_SCALE=0 pins full-res (A/B measurement or escape hatch).
+    internal static readonly bool AdaptiveScaleEnabled =
+        Environment.GetEnvironmentVariable("SIDECAR_ADAPTIVE_SCALE") != "0";
+    private double _motionScore;
+    private double _encodeScale = 1.0;
+    private double _lastEncodeScale = 1.0;
+
     // ---- idle detection (written by the producer thread between composes) ----
     private bool _hasComposedOnce;
     private bool _missedFrames;
@@ -241,6 +252,21 @@ public sealed class ClientFrameSink : IDisposable
         bool effectiveCursorVisible = ShowHostCursor && frame.CursorVisible;
         bool cursorChanged = effectiveCursorVisible != _lastCursorVisible
             || (effectiveCursorVisible && (frame.CursorGlobalX != _lastCursorX || frame.CursorGlobalY != _lastCursorY));
+
+        // Score every tick (including idle ones) so the adaptive scale tracks real capture
+        // activity and releases promptly when motion stops. Must run before settingsChanged
+        // so a scale flip forces a compose on this exact tick (including calm upgrades).
+        _motionScore = _motionScore * 0.9 + (frame.Captured ? 1.0 : 0.0);
+        double wantScale = _encodeScale;
+        if (!AdaptiveScaleEnabled) wantScale = 1.0;
+        else if (_motionScore > 5.0) wantScale = 0.5;
+        else if (_motionScore < 2.0) wantScale = 1.0;
+        if (wantScale != _encodeScale)
+        {
+            _encodeScale = wantScale;
+            Console.WriteLine($"[Sink] {DeviceName}: encode scale -> {(wantScale == 1.0 ? "full" : "half")} (motion score {_motionScore:F1})");
+        }
+
         bool settingsChanged = !_hasComposedOnce
             || DeviceName != _lastDeviceName
             || TargetWidth != _lastTargetW
@@ -249,7 +275,8 @@ public sealed class ClientFrameSink : IDisposable
             || ShowHostCursor != _lastShowHostCursor
             || Quality != _lastQuality
             || Codec != _lastCodec
-            || ColorDepth != _lastColorDepth;
+            || ColorDepth != _lastColorDepth
+            || _encodeScale != _lastEncodeScale;
 
         // Pending recovery work must reach the consumer even when the desktop is static:
         // a missed frame owes a full refresh; a forceidr or an armed HEVC retry owes an
@@ -274,8 +301,9 @@ public sealed class ClientFrameSink : IDisposable
             int nativeW = frame.Width;
             int nativeH = frame.Height;
 
-            // Even, aspect-preserving target size derived from the native frame
-            int dstW = TargetWidth > 0 ? TargetWidth : 2360;
+            // Even, aspect-preserving target size derived from the native frame, scaled by
+            // the adaptive encode scale (half size during sustained motion, full when calm).
+            int dstW = (int)((TargetWidth > 0 ? TargetWidth : 2360) * _encodeScale);
             dstW = (dstW / 2) * 2;
             if (dstW < 2) dstW = 2;
             int dstH = (int)Math.Round((double)dstW * nativeH / nativeW);
@@ -551,6 +579,7 @@ public sealed class ClientFrameSink : IDisposable
             _lastQuality = Quality;
             _lastCodec = Codec;
             _lastColorDepth = ColorDepth;
+            _lastEncodeScale = _encodeScale;
 
             if (Interlocked.Exchange(ref _composeLogged, 1) == 0)
                 Console.WriteLine($"[Sink] First frame composed {dstW}x{dstH} for {DeviceName}");
@@ -924,18 +953,6 @@ public sealed class ClientFrameSink : IDisposable
         }
         if (_hevcBitrateFloor > 0) bitrate = Math.Min(bitrate, _hevcBitrateFloor);
 
-        // Restart coalescing: changing bitrate tears down and respawns ffmpeg plus a fresh
-        // IDR, so hold the running encoder's bitrate for 30s and apply the newest target once.
-        if (_encoderBitrate > 0 && bitrate != _encoderBitrate
-            && Environment.TickCount64 - _lastBitrateChangeTicks < 30_000)
-        {
-            bitrate = _encoderBitrate;
-        }
-        else if (bitrate != _encoderBitrate)
-        {
-            _lastBitrateChangeTicks = Environment.TickCount64;
-        }
-
         // Client requested a clean reference state (tab visible again): restart the encoder
         // so the next frame is a fresh IDR
         if (_hevcRestartRequested)
@@ -960,6 +977,28 @@ public sealed class ClientFrameSink : IDisposable
         }
 
         int depth = ColorDepth == 10 ? 10 : 8;
+
+        // Restart coalescing with urgency asymmetry. Geometry (size/fps/depth) changes always
+        // apply immediately — the encoder cannot keep running at the wrong size anyway (this
+        // also fixes the adaptive-scale switch, which must take the new size's bitrate at once
+        // instead of running half-res at the full-res bitrate for 30s and restarting twice).
+        // Pure bitrate changes: downward applies immediately (congestion relief is urgent);
+        // upward holds 30s (quality restoration can wait out a flap). Every change costs a
+        // respawn + IDR either way.
+        bool geometryChanged = _encoderBitrate == 0
+            || width != _encoderWidth || height != _encoderHeight
+            || targetFramerate != _encoderFramerate || depth != _encoderDepth;
+        if (!geometryChanged && bitrate != _encoderBitrate
+            && bitrate > _encoderBitrate
+            && Environment.TickCount64 - _lastBitrateChangeTicks < 30_000)
+        {
+            bitrate = _encoderBitrate; // hold; upward flap will pass
+        }
+        else if (bitrate != _encoderBitrate || geometryChanged)
+        {
+            _lastBitrateChangeTicks = Environment.TickCount64;
+        }
+
         var activeEncoder = EnsureHevcEncoder(width, height, bitrate, targetFramerate, depth);
         if (activeEncoder == null)
         {
@@ -1039,8 +1078,37 @@ public sealed class ClientFrameSink : IDisposable
         return true;
     }
 
+    private readonly object _paceLock = new();
+    private long _nextSendSlotUs; // pacing grid: AUs go out on an even cadence, not as-they-complete
+
     private async Task SendHevcPacketAsync(byte[] nalBytes, bool isKeyframe, long timestampUs)
     {
+        // Paced send: QSV completes frames in bursts (keyframe + backlog flush together), and
+        // bursty arrivals waste client vsyncs (two frames in one interval = one discarded, the
+        // next interval starves). Releasing AUs on an even TargetFramerate cadence converts
+        // arrivals into paintings ~1:1. Late frames go immediately; only early ones wait, so
+        // this can only smooth, never stall, the stream. Runs before the in-flight count so
+        // pacer waits don't trip network backpressure.
+        long intervalUs = 1_000_000L / Math.Max(1, TargetFramerate);
+        long delayUs;
+        lock (_paceLock)
+        {
+            long nowUs = _hub.NowUs();
+            long slot = _nextSendSlotUs <= 0 ? nowUs : _nextSendSlotUs;
+            if (slot > nowUs)
+            {
+                delayUs = slot - nowUs;
+                _nextSendSlotUs = slot + intervalUs;
+            }
+            else
+            {
+                delayUs = 0;
+                _nextSendSlotUs = nowUs + intervalUs;
+            }
+        }
+        if (delayUs > 0)
+            await Task.Delay(TimeSpan.FromMicroseconds(delayUs), CancellationToken.None);
+
         Interlocked.Increment(ref _hevcSendsInFlight);
         try
         {
