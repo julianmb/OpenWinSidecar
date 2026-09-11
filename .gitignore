@@ -1,0 +1,44 @@
+## Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio & Rider
+.vs/
+.idea/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+*.userprefs
+
+## Scratch / Temporary test images
+*.scratch
+scratch/
+scratch_*.jpg
+scratch_*.png
+
+## OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+## Diagnostics / logs
+*.log
+
+## Heavy upstream bundles (use the extracted files under drivers/VDD instead)
+drivers/VDD/vdd_control.zip
+drivers/VDD/vdd_x64.zip
+drivers/VDD/control/VDD Control.exe
+drivers/VDD/control/VDD Control.pdb

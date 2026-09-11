@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OpenWinSidecar.Cli/OpenWinSidecar.Cli.csproj" />
+    <Project Path="src/OpenWinSidecar/OpenWinSidecar.csproj" />
+    <Project Path="src/OpenWinSidecar.Core/OpenWinSidecar.Core.csproj" />
+    <Project Path="src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenWinSidecar.Service.Tests/OpenWinSidecar.Service.Tests.csproj" />
+  </Folder>
+</Solution>
