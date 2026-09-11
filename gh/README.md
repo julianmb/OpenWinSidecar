@@ -52,7 +52,7 @@ Take the full build, not Essentials — the hardware HEVC encoder needs it. The 
 ### 3. Build and run
 
 ```powershell
-git clone <this repo>
+git clone https://github.com/julianmb/OpenWinSidecar.git
 cd OpenWinSidecar
 dotnet build OpenWinSidecar.slnx
 dotnet run --project src/OpenWinSidecar
