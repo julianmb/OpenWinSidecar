@@ -1,5 +1,9 @@
 # Troubleshooting & Diagnostic Guide
 
+## 0. Stream is black but everything looks connected
+
+**Check first: is the Windows PC locked?** When Windows sits on the lock screen (`LogonUI`), the virtual display shows black and the server faithfully streams it — client fps drops to 0 on a static picture, which is all working as designed. Unlock at the PC keyboard and the picture returns on its own. (Tip: if this bites you when stepping away with the iPad, lengthen the screen-lock timeout in Windows Settings → Accounts → Sign-in options.)
+
 ## 1. Black Screen on Virtual Display
 
 ### Symptoms:
