@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Capture](https://img.shields.io/badge/Capture-Direct3D%2011%20DXGI-green.svg)]()
 [![Codec](https://img.shields.io/badge/Encoder-Intel%20QSV%20HEVC-orange.svg)]()
@@ -29,7 +29,7 @@ The core idea is simple: **an iPad already has a great hardware video decoder an
 | Extra monitor (extend, not mirror) | ✅ | ✅ | ✅ |
 | Client install | **None — Safari** | iPad built-in | App + account |
 | Hardware H.265 end-to-end | ✅ Intel QSV → Apple silicon | ✅ | varies |
-| Open source / self-hosted | ✅ MIT | ❌ | ❌ |
+| Open source / self-hosted | ✅ AGPL-3.0 | ❌ | ❌ |
 | Touch → Windows input | ✅ | ✅ (Mac only) | ✅ |
 | Cost | free | needs a Mac | subscription |
 
@@ -151,4 +151,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The codebase is C# / .NET 10 with Win32 
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The bundled virtual display driver (MttVDD) retains its own licensing.
+AGPL-3.0 — see [LICENSE](LICENSE). The bundled virtual display driver (MttVDD) retains its own licensing.

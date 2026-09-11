@@ -49,4 +49,4 @@ dotnet run --project src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj
 ---
 
 ## 📄 License
-By contributing to OpenWinSidecar, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing to OpenWinSidecar, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0](LICENSE).

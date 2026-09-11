@@ -111,4 +111,4 @@ dotnet run --project src/OpenWinSidecar.Cli -- restart
 
 ## 📄 License
 
-MIT License
+GNU Affero General Public License v3.0 (see `gh/LICENSE` — the `gh/` tree is the published project).
