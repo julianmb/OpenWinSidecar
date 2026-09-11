@@ -1,10 +1,34 @@
 # Future Work & Deferred Decisions
 
-> _Last updated: 2026-09-10_
+> _Last updated: 2026-09-12_
 
 This document tracks improvements that were prototyped, evaluated, or consciously deferred —
 with the reasoning, so the next contributor doesn't repeat a dead end. Items are ordered by
 how actionable they are.
+
+---
+
+## 0. Recently resolved (2026-09-11/12) — do not re-investigate
+
+- **120 Hz end-to-end: WORKS.** The IddCx display advertises and switches to 2360×1640 @ 120Hz;
+  the hub sustained 112–119 ticks/s at capture 1.3–3.7ms. QSV saturates at ~45–60fps on
+  full-motion native content, so 120Hz only pays for light motion on a 120Hz panel.
+- **10-bit Main10: VALIDATED on iPad.** QSV `format=p010le,hwupload` auto-selects Main10
+  (ffprobe-confirmed); viewer hvcC follows the live SPS; rejecting decoders auto-revert.
+  Opt-in via viewer Color-depth select.
+- **4:4:4 chroma: RULED OUT.** QSV emits Rext for 444 input; iPads fall to software decode.
+- **`-async_depth 1` is load-bearing.** Removing it (intended pipelining win) cost ~25ms
+  latency and 6fps presented; restored after A/B. Server-received fps ≠ presented fps.
+- **Decoder-death freeze: FIXED.** A silence-flush timer could emit a truncated NAL and kill
+  Safari's decoder into permanent JPEG fallback. The timer now only flushes complete AUs;
+  the viewer rebuilds + resyncs on transient decode errors (JPEG only after 3/min).
+- **~1s micro-stop: FIXED.** Scene-cut I-slices + unconstrained P spikes (100–162KB) stalled
+  the wire 80–130ms each. Now `adaptive_i 0`, `low_delay_brc`, `mbbrc`, frame-size caps.
+- **Encoder "warmup ramp": EXONERATED (isolated benchmark).** A single encoder fed at 60Hz
+  outputs a steady 62.4–62.6 AUs/s from ~5s at all operating points, including noise at the
+  bitrate cap. The slower settling seen on fresh live sessions is startup churn
+  (warmup spawn → first-push re-init → adaptive-scale switch = 2–3 respawns + IDR bursts)
+  plus client catch-up — self-resolving, no action. Do not "fix" BRC warmup; it doesn't exist.
 
 ---
 
@@ -134,15 +158,12 @@ remove the external dependency.
 
 ---
 
-## 8. Console UI polish (deferred)
+## 8. Console UI polish — done (2026-09-10/11)
 
-The structural pass (2026-09-10) consolidated the resolution controls, moved maintenance into an
+The structural pass consolidated the resolution controls, moved maintenance into an
 "Advanced" expander, added an open-access/password badge, masked the password, moved logs to a
 separate resizable `LogWindow`, set a **4:3 window with stretching cards**, added a **live
-connected-clients table** (fed by `ClientFrameSink.Snapshot()`), and a **Session** card (state,
-display, encoder, clients, uptime). The right column also carries an **inline live log preview**
-(fed from the same buffer; the separate `LogWindow` remains for the full view). Resolution/scale
-dropdowns are **immediate-apply** (no Apply buttons). Remaining polish:
-
-- Optional: remember window position; richer client details (codec profile, keyframe age);
-  per-client disconnect / kick.
+connected-clients table** with per-client **Kick**, **window-position memory** (registry),
+and a **Session** card (state, display, encoder, clients, uptime) with a **live
+fps/latency sparkline**. Resolution/scale dropdowns are **immediate-apply** (no Apply buttons).
+Remaining polish: richer client details (codec profile, keyframe age).

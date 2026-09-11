@@ -4,6 +4,27 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-12 — Night shift: recovery infrastructure + encoder exoneration
+
+### Added (robustness)
+- **Capped file logging** (`ServiceLogging.FileLogSink`): mirrors every console line to `%LOCALAPPDATA%\OpenWinSidecar\logs\sidecar.log` with timestamps, rolls at 5MB (keeps one generation). Zero call-site changes — hooks the existing `ConsoleLogForwarder`. Verified live.
+- **Single-instance guard** (`Core.SingleInstanceGuard` + `App.OnStartup`): a second full launch shows "already running" and exits instead of fighting over ports/VDD. `--screenshot` diagnostics exempt (pinned by test). Verified live via mutex.
+- **Capture watchdog** (`FrameBroadcastHub`): 5s timer recreates any producer with attached sinks that hasn't ticked in 15s (pure `IsProducerStalled` predicate, wrap-safe). Dispose happens off-lock to avoid the idle-retire join deadlock.
+
+### Changed
+- **JPEG adaptive floor 40 → 55**: below 55 text is unreadable — prefer dropping over mush.
+
+### Measured (encoder warmup: exonerated)
+- Isolated `encbench` (production QSV args, 60Hz synthetic pushes): **steady 62.4–62.6 AUs/s from ~5s at all operating points, including noise pinned at the bitrate cap**. No BRC warmup exists. Live-session slow settling = startup churn (warmup spawn → first-push re-init → scale switch) + client catch-up; self-resolving. `future-work.md` updated accordingly (§0 resolved list, §8 marked done).
+
+### Fixed (iOS, CI-unverified — patterns mirror existing code)
+- **Native decoder-error recovery** (`VideoPipeline` + `StreamConnection`): 3 consecutive VT failures → `forceidr` (server rate-limits restarts); resets on good frames and on reconfigure. Previously a corrupt chunk left the native session permanently stale with no signal.
+
+### Verified
+- 49/49 .NET (watchdog predicate incl. TickCount wrap, log rotation order/tail, singleton) + existing JS suite untouched. App restarted and left running with all of the above.
+
+---
+
 ## 2026-09-12 — Windows installer groundwork (Inno Setup + winget manifests)
 
 ### Added

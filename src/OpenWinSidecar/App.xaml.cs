@@ -22,6 +22,17 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         WriteLog($"Application OnStartup: {string.Join(" ", e.Args)}");
+
+        // A second full instance would fight the first over ports 80/8080/28252 and the
+        // VDD. Diagnostic --screenshot runs are exempt (they exit without streaming).
+        if (!OpenWinSidecar.Core.Services.SingleInstanceGuard.IsExempt(e.Args)
+            && !OpenWinSidecar.Core.Services.SingleInstanceGuard.TryAcquire())
+        {
+            System.Windows.MessageBox.Show(
+                "OpenWinSidecar is already running (check the system tray).",
+                "OpenWinSidecar", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

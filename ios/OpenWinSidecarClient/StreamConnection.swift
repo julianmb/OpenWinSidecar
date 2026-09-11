@@ -34,6 +34,10 @@ public final class StreamConnection: NSObject, URLSessionWebSocketDelegate {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = false
         self.session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue())
+        // Sustained decode failures mean our reference state is stale (corrupt chunk,
+        // missed keyframe): ask the server for a fresh IDR. Server-side restarts are
+        // rate-limited, and the pipeline only fires every 3rd consecutive failure.
+        videoPipeline.onDecodeError = { [weak self] in self?.sendForceIdr() }
     }
 
     public func connect(host: String, port: Int = 8080) {

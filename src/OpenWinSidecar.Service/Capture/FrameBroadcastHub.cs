@@ -18,9 +18,18 @@ public sealed class FrameBroadcastHub : IDisposable
     private readonly object _sync = new();
     private readonly Dictionary<string, DisplayCaptureProducer> _producers = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<ClientFrameSink> _sinks = new();
+    private readonly System.Threading.Timer _watchdog;
     private bool _disposed;
 
     internal long NowUs() => _clock.ElapsedTicks * 1_000_000 / Stopwatch.Frequency;
+
+    /// <summary>Ms without a producer tick before the watchdog recreates it (sinks attached).</summary>
+    internal const long ProducerStallThresholdMs = 15000;
+
+    public FrameBroadcastHub()
+    {
+        _watchdog = new System.Threading.Timer(_ => CheckProducers(), null, 5000, 5000);
+    }
 
     public ClientFrameSink CreateSink(NetworkStream stream, SemaphoreSlim streamLock, string deviceName, string remoteAddress = "")
     {
@@ -76,6 +85,52 @@ public sealed class FrameBroadcastHub : IDisposable
     }
 
     /// <summary>
+    /// Pure stall decision (unit-testable): a producer with attached sinks that hasn't ticked
+    /// within the threshold is dead (its thread is gone or wedged inside a capture call).
+    /// Unchecked subtraction keeps TickCount64 wrap-around correct.
+    /// </summary>
+    internal static bool IsProducerStalled(long lastTickMs, long nowMs, bool hasSinks, long thresholdMs = ProducerStallThresholdMs)
+        => hasSinks && unchecked(nowMs - lastTickMs) > thresholdMs;
+
+    private void CheckProducers()
+    {
+        List<DisplayCaptureProducer>? stalled = null;
+        lock (_sync)
+        {
+            if (_disposed) return;
+            long now = Environment.TickCount64;
+            foreach (var producer in _producers.Values)
+            {
+                bool hasSinks = false;
+                foreach (var sink in _sinks)
+                {
+                    if (string.Equals(sink.DeviceName, producer.DeviceName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasSinks = true;
+                        break;
+                    }
+                }
+                if (!IsProducerStalled(producer.LastTickMs, now, hasSinks))
+                    continue;
+                Console.WriteLine($"[Hub] {producer.DeviceName}: capture stall detected, recreating producer");
+                if (_producers.TryGetValue(producer.DeviceName, out var current) && ReferenceEquals(current, producer))
+                    _producers.Remove(producer.DeviceName);
+                (stalled ??= new List<DisplayCaptureProducer>()).Add(producer);
+            }
+        }
+        // Dispose off-lock: Dispose joins the producer thread, which may itself be waiting
+        // on _sync (idle retire path) — joining under the lock would deadlock for 500ms.
+        if (stalled != null)
+        {
+            foreach (var producer in stalled)
+            {
+                try { producer.Dispose(); } catch { }
+                EnsureProducer(producer.DeviceName);
+            }
+        }
+    }
+
+    /// <summary>
     /// Fills <paramref name="buffer"/> with the sinks targeting <paramref name="deviceName"/>.
     /// The producer reuses one buffer per tick, so the 60 Hz capture loop allocates nothing
     /// for sink enumeration (the previous <c>GetSinksFor</c> allocated up to four lists/tick).
@@ -99,6 +154,7 @@ public sealed class FrameBroadcastHub : IDisposable
         {
             if (_disposed) return;
             _disposed = true;
+            try { _watchdog.Dispose(); } catch { }
 
             foreach (var producer in _producers.Values)
             {
@@ -147,6 +203,9 @@ internal sealed class DisplayCaptureProducer : IDisposable
 
     public string DeviceName => _deviceName;
 
+    /// <summary>Last Loop iteration (ms, TickCount64); the hub watchdog recreates the producer if this goes stale while sinks are attached.</summary>
+    public long LastTickMs { get; private set; } = Environment.TickCount64;
+
     public DisplayCaptureProducer(FrameBroadcastHub hub, string deviceName)
     {
         _hub = hub;
@@ -180,6 +239,7 @@ internal sealed class DisplayCaptureProducer : IDisposable
 
         while (!token.IsCancellationRequested)
         {
+            LastTickMs = Environment.TickCount64;
             long captureUs = 0, composeUs = 0;
             try
             {

@@ -23,6 +23,8 @@ public sealed class StreamingServerHost : IDisposable
         // Intercept console output so all internal components' logs are surfaced
         ConsoleLogForwarder.EnsureInitialized();
         ConsoleLogForwarder.OnLogLine += line => OnLog?.Invoke(line);
+        // Mirror everything to the capped log file for post-mortem debugging
+        FileLogSink.EnsureInitialized();
     }
 
     public void Start(int port = 28252)
