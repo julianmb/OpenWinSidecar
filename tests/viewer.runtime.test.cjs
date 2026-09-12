@@ -164,6 +164,11 @@ test('canvas gestures inject, and release off-canvas still lifts the button', ()
     assert.ok(!sent.some(m => m.startsWith('input:')), 'UI-only gesture must stay silent, got: ' + sent);
 });
 
+test('settings modal links the AGPL source without hijacking the stream tab', () => {
+    assert.match(html, /id='source-link'[^>]*href='https:\/\/github\.com\/julianmb\/OpenWinSidecar'/);
+    assert.match(html, /id='source-link'[^>]*target='_blank'/);
+});
+
 test('two-finger scroll starting on UI never scrolls Windows', () => {
     const v = viewer();
     const ui = uiOf(v);

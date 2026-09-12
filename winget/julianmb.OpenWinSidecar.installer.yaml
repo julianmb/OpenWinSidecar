@@ -1,0 +1,15 @@
+PackageIdentifier: julianmb.OpenWinSidecar
+PackageVersion: 0.1.0
+InstallerType: inno
+Scope: machine
+UpgradeBehavior: install
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/julianmb/OpenWinSidecar/releases/download/v0.1/OpenWinSidecar-Setup-0.1.0.exe
+  # TODO: replace with the real SHA-256 of the built installer before submitting.
+  #   Get-FileHash installer/output/OpenWinSidecar-Setup-0.1.0.exe -Algorithm SHA256
+  InstallerSha256: FILL_IN_AFTER_BUILD__64_HEX_CHARS_REQUIRED
+  InstallerSwitches:
+    Silent: /SILENT
+ManifestType: installer
+ManifestVersion: 1.6.0

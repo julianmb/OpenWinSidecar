@@ -647,16 +647,17 @@ public sealed class ClientFrameSink : IDisposable
             // than the old downscaled frames, so a fixed quality can saturate the network
             // and stall fluidity. Track the encode+send window and step quality down
             // while over budget, recovering slowly when healthy. The client's Quality
-            // setting is the ceiling and 40 is the floor.
+            // setting is the ceiling and 55 is the floor (below that, text is unreadable —
+            // prefer dropping to HEVC-or-nothing over mush).
             if (Codec == StreamCodec.IntraTurbo)
             {
                 if (frameMs > AdaptiveTargetMs)
                 {
                     _adaptiveStrikes++;
                     _adaptiveRecovery = 0;
-                    if (_adaptiveStrikes >= 8 && _adaptiveQuality > 40)
+                    if (_adaptiveStrikes >= 8 && _adaptiveQuality > 55)
                     {
-                        _adaptiveQuality = Math.Max(40, _adaptiveQuality - 10);
+                        _adaptiveQuality = Math.Max(55, _adaptiveQuality - 10);
                         _adaptiveStrikes = 0;
                         Console.WriteLine($"[Sink] {DeviceName}: JPEG quality -> {_adaptiveQuality}% (frame {frameMs:F0}ms > {AdaptiveTargetMs:F0}ms target)");
                     }

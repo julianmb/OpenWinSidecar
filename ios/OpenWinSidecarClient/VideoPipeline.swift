@@ -7,6 +7,8 @@ public final class VideoPipeline {
     private var decompressionSession: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
     public var onFrameDecoded: ((CVPixelBuffer) -> Void)?
+    public var onDecodeError: (() -> Void)?
+    private var consecutiveDecodeErrors = 0
 
     public init() {}
 
@@ -20,6 +22,7 @@ public final class VideoPipeline {
             decompressionSession = nil
         }
         formatDescription = nil
+        consecutiveDecodeErrors = 0
     }
 
     /// Configures the hardware HEVC decoder using an ISO/IEC 14496-15 hvcC description record
@@ -220,8 +223,20 @@ public final class VideoPipeline {
             flags: [._EnableAsynchronousDecompression],
             infoFlagsOut: &flagsOut
         ) { [weak self] status, _, imageBuffer, _, _ in
-            guard status == noErr, let pixelBuffer = imageBuffer else { return }
-            self?.onFrameDecoded?(pixelBuffer)
+            guard let self = self else { return }
+            guard status == noErr, let pixelBuffer = imageBuffer else {
+                // A corrupt chunk (or stale reference) fails the frame but not the session:
+                // after 3 in a row, ask for a fresh keyframe. The server rate-limits encoder
+                // restarts, so this cannot flood. Resets on the next good frame.
+                self.consecutiveDecodeErrors += 1
+                if self.consecutiveDecodeErrors >= 3 {
+                    self.consecutiveDecodeErrors = 0
+                    self.onDecodeError?()
+                }
+                return
+            }
+            self.consecutiveDecodeErrors = 0
+            self.onFrameDecoded?(pixelBuffer)
         }
     }
 }

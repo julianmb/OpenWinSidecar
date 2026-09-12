@@ -4,6 +4,44 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-12 — Night shift: recovery infrastructure + encoder exoneration
+
+### Added (robustness)
+- **Capped file logging** (`ServiceLogging.FileLogSink`): mirrors every console line to `%LOCALAPPDATA%\OpenWinSidecar\logs\sidecar.log` with timestamps, rolls at 5MB (keeps one generation). Zero call-site changes — hooks the existing `ConsoleLogForwarder`. Verified live.
+- **Single-instance guard** (`Core.SingleInstanceGuard` + `App.OnStartup`): a second full launch shows "already running" and exits instead of fighting over ports/VDD. `--screenshot` diagnostics exempt (pinned by test). Verified live via mutex.
+- **Capture watchdog** (`FrameBroadcastHub`): 5s timer recreates any producer with attached sinks that hasn't ticked in 15s (pure `IsProducerStalled` predicate, wrap-safe). Dispose happens off-lock to avoid the idle-retire join deadlock.
+
+### Changed
+- **JPEG adaptive floor 40 → 55**: below 55 text is unreadable — prefer dropping over mush.
+
+### Measured (encoder warmup: exonerated)
+- Isolated `encbench` (production QSV args, 60Hz synthetic pushes): **steady 62.4–62.6 AUs/s from ~5s at all operating points, including noise pinned at the bitrate cap**. No BRC warmup exists. Live-session slow settling = startup churn (warmup spawn → first-push re-init → scale switch) + client catch-up; self-resolving. `future-work.md` updated accordingly (§0 resolved list, §8 marked done).
+
+### Fixed (iOS, CI-unverified — patterns mirror existing code)
+- **Native decoder-error recovery** (`VideoPipeline` + `StreamConnection`): 3 consecutive VT failures → `forceidr` (server rate-limits restarts); resets on good frames and on reconfigure. Previously a corrupt chunk left the native session permanently stale with no signal.
+
+### Verified
+- 49/49 .NET (watchdog predicate incl. TickCount wrap, log rotation order/tail, singleton) + existing JS suite untouched. App restarted and left running with all of the above.
+
+---
+
+## 2026-09-12 — Windows installer groundwork (Inno Setup + winget manifests)
+
+### Added
+- `installer/OpenWinSidecar.iss`: admin installer (Program Files layout, VDD driver registration via pnputil, firewall rule, Start Menu entry, clean uninstall with firewall/task cleanup). Silent switches (`/SILENT`) included for winget. Debug symbols excluded from packaging.
+- Self-contained single-file publish recipe (in the .iss header): no .NET runtime needed on the target machine (~89MB exe).
+- `gh/winget/`: v0.1.0 manifests (`julianmb.OpenWinSidecar`) + submission README. SHA-256 intentionally left as placeholder until the installer is built.
+- Root `LICENSE` (AGPL-3.0, mirrors `gh/LICENSE`) so the installer script resolves `..\LICENSE` in both trees; `tools/sync_gh_mirror.ps1` now mirrors `installer/` too.
+
+### Pending (needs an elevated session / release)
+- Install Inno Setup 6, compile the .iss, test install + uninstall locally.
+- Tag `v0.1`, GitHub Release with `OpenWinSidecar-Setup-0.1.0.exe` attached, fill manifest hash, submit to winget-pkgs.
+
+### Verified
+- `dotnet publish` self-contained win-x64 succeeds (89MB single exe). .iss reviewed against Inno 6 schema (uncompiled — compiler pending).
+
+---
+
 ## 2026-09-11 — Viewer ghost clicks: UI taps no longer reach the desktop
 
 ### Fixed
