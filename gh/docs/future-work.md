@@ -137,11 +137,17 @@ to JPEG — never ship a broken stream. Validate on real NVIDIA/AMD hardware whe
 
 ---
 
-## 6. Distribution — bundle FFmpeg
+## 6. Distribution — bundle FFmpeg: RESOLVED (2026-09-12, winget instead of bundling)
 
 The service depends on a separately-installed FFmpeg (Gyan build), located via
-`FindFfmpegExecutable`. For end-user distribution, bundle a minimal ffmpeg (or install it) to
-remove the external dependency.
+`FindFfmpegExecutable`. Resolved for v0.1 by making the dependency declarative instead of
+bundling: the Windows installer detects ffmpeg (same order as the runtime: PATH → WinGet
+`Links` alias → `Packages` scan) and installs `Gyan.FFmpeg` via winget when missing; the
+winget package itself declares `Gyan.FFmpeg` as a `PackageDependencies` entry, so
+`winget install OpenWinSidecar` pulls it automatically. Bundling GPL FFmpeg binaries was
+rejected: +~100 MB installer and redistribution obligations for no functional gain.
+Remaining edge: machines with neither winget nor ffmpeg still degrade to JPEG (installer
+warns, app logs the install command).
 
 ---
 

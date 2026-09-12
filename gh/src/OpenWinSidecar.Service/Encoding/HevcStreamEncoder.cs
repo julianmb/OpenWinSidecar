@@ -64,6 +64,24 @@ public sealed class HevcStreamEncoder : IDisposable
     }
 
     private static string? _cachedFfmpegPath;
+    private static bool _warnedFfmpegMissing;
+
+    /// <summary>
+    /// Explicit ffmpeg.exe candidates checked after PATH (where.exe), most-specific first:
+    /// an optional app-local side-by-side bundle ({app}\ffmpeg\bin) wins, then the winget
+    /// portable alias ({localappdata}\Microsoft\WinGet\Links) — which covers a fresh
+    /// "winget install Gyan.FFmpeg" whose PATH change hasn't propagated to this process —
+    /// before the slower recursive Packages scan.
+    /// </summary>
+    public static string[] GetFfmpegSearchPaths()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return
+        [
+            Path.Combine(AppContext.BaseDirectory, "ffmpeg", "bin", "ffmpeg.exe"),
+            Path.Combine(localAppData, "Microsoft", "WinGet", "Links", "ffmpeg.exe"),
+        ];
+    }
 
     public static string? FindFfmpegExecutable()
     {
@@ -98,7 +116,13 @@ public sealed class HevcStreamEncoder : IDisposable
         }
         catch { }
 
-        // 2. Check standard WinGet paths
+        // 2. Explicit candidates (app-local bundle, WinGet Links alias)
+        foreach (var candidate in GetFfmpegSearchPaths())
+        {
+            if (File.Exists(candidate)) return candidate;
+        }
+
+        // 3. Scan the WinGet portable package tree (Gyan.FFmpeg via winget lands here)
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var wingetDir = Path.Combine(localAppData, "Microsoft", "WinGet", "Packages");
         if (Directory.Exists(wingetDir))
@@ -107,6 +131,16 @@ public sealed class HevcStreamEncoder : IDisposable
             if (matches.Length > 0) return matches[0];
         }
 
+        // 4. Fall back to the bare name, resolved against the process PATH at spawn time.
+        //    If we got this far, none of the known locations had it — say so once, with the fix.
+        if (!_warnedFfmpegMissing)
+        {
+            _warnedFfmpegMissing = true;
+            Console.WriteLine(
+                "[HEVC] FFmpeg was not found in PATH, the WinGet package tree, or next to the app. " +
+                "Install it with: winget install --id Gyan.FFmpeg -e (full build), then restart — " +
+                "streaming falls back to JPEG intra until it is available.");
+        }
         return "ffmpeg.exe";
     }
 

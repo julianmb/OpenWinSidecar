@@ -35,13 +35,27 @@ The core idea is simple: **an iPad already has a great hardware video decoder an
 
 ## Quick start
 
-**You need:** a Windows 10/11 PC, the .NET 10 SDK, an iPad (or any modern browser) on the same network — plus the two one-time installs below.
+**You need:** a Windows 10/11 PC and an iPad (or any modern browser) on the same network.
 
-### 1. Install the virtual display driver (once, as Administrator)
+### Option A — Windows installer (recommended)
+
+Download **OpenWinSidecar-Setup-0.1.0.exe** from [Releases](https://github.com/julianmb/OpenWinSidecar/releases/latest) and run it. The installer registers the virtual display driver (creating the real extra monitor), installs the Gyan FFmpeg full build via winget if no FFmpeg is present, adds the private-network firewall rule, and can be removed cleanly from Apps & Features. It is also submitted to winget as `julianmb.OpenWinSidecar` (with FFmpeg declared as a package dependency) — once that listing is approved:
+
+```powershell
+winget install --id julianmb.OpenWinSidecar -e
+```
+
+Then launch **OpenWinSidecar** from the Start Menu and skip to [Connect the iPad](#4-connect-the-ipad).
+
+### Option B — build from source
+
+You need the .NET 10 SDK plus the two one-time installs below.
+
+#### 1. Install the virtual display driver (once, as Administrator)
 
 Right-click `drivers/VDD/install_driver.bat` → **Run as administrator**. This creates the real extra monitor that Windows will extend onto. No reboot needed. If the display doesn't appear, see [drivers-and-virtual-monitors.md](docs/drivers-and-virtual-monitors.md).
 
-### 2. Install FFmpeg (once)
+#### 2. Install FFmpeg (once)
 
 ```powershell
 winget install --id Gyan.FFmpeg -e
@@ -49,7 +63,7 @@ winget install --id Gyan.FFmpeg -e
 
 Take the full build, not Essentials — the hardware HEVC encoder needs it. The app finds it on PATH by itself; if you just installed it, open a fresh terminal first.
 
-### 3. Build and run
+#### 3. Build and run
 
 ```powershell
 git clone https://github.com/julianmb/OpenWinSidecar.git

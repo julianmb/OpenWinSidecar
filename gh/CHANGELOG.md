@@ -4,6 +4,26 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-12 — v0.1 release: installer verified end-to-end, FFmpeg made a winget dependency
+
+### Fixed (installer, all verified by live elevated install + uninstall cycles on the dev machine)
+- **Fresh-machine driver install actually creates the monitor now.** `pnputil /add-driver /install` only stages the package — the root device node never existed, so a clean machine got the driver staged but no virtual display. Added a [Run] `devcon.exe install ... Root\MttVDD` step (mirrors the app's own `InstallVirtualDisplayDriver`). Verified: after uninstalling (node gone), the new installer re-created `ROOT\DISPLAY\0000` and it Started.
+- **Driver resolution matrix deployed.** `MttVDD.dll` reads `C:\VirtualDisplayDriver\vdd_settings.xml` at init; the installer never wrote it. Now `[Files]` copies it there (`uninsneveruninstall`), backing any existing file up to `.bak` first — verified: live settings survived the test cycles with a `.bak` beside them.
+- **Uninstall removes the driver package.** New `[Code]` maps `pnputil /enum-drivers` → the published `oemXX.inf` for `mttvdd.inf` (case-insensitive — the store lists it lowercase, which broke the first cut of the parser; caught by the live test) and runs `/delete-driver /uninstall`. Verified: device node, DriverStore package, firewall rule, and Program Files all clean after uninstall; settings file intentionally kept.
+
+### Added
+- **FFmpeg dependency handled at install time** (closes `future-work.md` §6): setup detects ffmpeg exactly like the runtime (`where.exe` → WinGet `Links` alias → recursive `Packages` scan) and installs `Gyan.FFmpeg` via winget when absent; if winget is missing or fails it warns with the manual command and continues (app degrades to JPEG and now logs the same instruction). The winget manifest additionally declares `Gyan.FFmpeg` under `PackageDependencies`, so `winget install OpenWinSidecar` resolves FFmpeg itself. Bundling GPL binaries was rejected (+~100 MB, redistribution obligations).
+- **Runtime resolver hardening** (`HevcStreamEncoder`): explicit ordered candidates (`GetFfmpegSearchPaths`, unit-tested) for `{app}\ffmpeg\bin` (future side-by-side bundling) and the WinGet `Links` alias (covers a fresh winget install whose PATH change hasn't reached the running process); one-time actionable log line when nothing is found (previously the resolver silently returned `"ffmpeg.exe"` and the failure only surfaced as a vague probe message).
+
+### Changed
+- UninstallRun entries got `RunOnceId`s (Inno warning cleanup). `pnputil /add-driver` exit code 259 (staged-pending) confirmed non-fatal in [Run].
+
+### Verified
+- 52/52 .NET (3 new search-path tests) + 12/12 viewer JS. Full cycle on the dev machine: install → verify (Program Files, node Started, firewall, settings+bak, FFmpeg-skip logged) → uninstall → verify (everything gone except settings) → reinstall → uninstall with fixed parser → verify (driver package also gone) → final install restored the machine (node Started, package staged).
+- `winget validate` passes on the three v0.1.0 manifests (note: only in a dir without `README.md` — winget tries to parse every file in the manifest dir as YAML; submission ships the three yamls only). Installer SHA-256 `9a33a345…a5215941` filled into the installer manifest. Setup exe: 84 MB.
+
+---
+
 ## 2026-09-12 — Night shift: recovery infrastructure + encoder exoneration
 
 ### Added (robustness)

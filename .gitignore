@@ -22,3 +22,6 @@ drivers/VDD/vdd_x64.zip
 # upstream control-panel GUI (163MB, unreferenced) - fetch from upstream releases if wanted
 drivers/VDD/control/VDD Control.exe
 drivers/VDD/control/VDD Control.pdb
+
+# ZCode session state
+.zcode/
