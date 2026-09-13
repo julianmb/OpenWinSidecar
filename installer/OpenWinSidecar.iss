@@ -75,10 +75,10 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 ; Stage the driver package into the DriverStore (gives us the oemXX.inf name
 ; for clean uninstall). Idempotent.
 Filename: "{sys}\pnputil.exe"; Parameters: "/add-driver ""{app}\drivers\VDD\MttVDD.inf"" /install"; Flags: runhidden; StatusMsg: "Installing virtual display driver..."
-; Create the root-enumerated device node. pnputil /add-driver alone only stages
-; the package — without this the virtual monitor never appears on a clean
-; machine. Harmless if the device already exists.
-Filename: "{app}\drivers\VDD\control\Dependencies\devcon.exe"; Parameters: "install ""{app}\drivers\VDD\control\SignedDrivers\x86\VDD\MttVDD.inf"" Root\MttVDD"; Flags: runhidden; StatusMsg: "Creating virtual display device..."
+; Create the root-enumerated device node, but ONLY when none exists — see
+; VddDeviceNodeAbsent. pnputil /add-driver alone only stages the package;
+; without this step the virtual monitor never appears on a clean machine.
+Filename: "{app}\drivers\VDD\control\Dependencies\devcon.exe"; Parameters: "install ""{app}\drivers\VDD\control\SignedDrivers\x86\VDD\MttVDD.inf"" Root\MttVDD"; Flags: runhidden; StatusMsg: "Creating virtual display device..."; Check: VddDeviceNodeAbsent
 ; Allow inbound streaming traffic on private networks.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""OpenWinSidecar"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=private"; Flags: runhidden; StatusMsg: "Configuring firewall..."
 ; Offer to launch (skipped on silent installs).
@@ -220,6 +220,8 @@ end;
 // driver package on uninstall (best effort — every failure is ignored).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+
 procedure RunHiddenLogged(const Exe, Params: String);
 var
   Code: Integer;
@@ -228,6 +230,29 @@ begin
     Log(Format('%s %s -> exit %d', [Exe, Params, Code]))
   else
     Log(Format('%s could not be launched.', [Exe]));
+end;
+
+// devcon install unconditionally CREATES a new device node, so re-running it on a
+// machine that already has one adds a ghost monitor (ROOT\DISPLAY\0001, 0002, ...).
+// Gate the [Run] entry on "no virtual display instance exists yet" — pnputil lists
+// the instance IDs, whose ROOT\DISPLAY\ prefix is locale-independent.
+function VddDeviceNodeAbsent(): Boolean;
+var
+  TmpFile: String;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  TmpFile := ExpandConstant('{tmp}\ows_vdd_enum.txt');
+  RunHiddenLogged(ExpandConstant('{cmd}'), '/c pnputil /enum-devices /class Display > "' + TmpFile + '"');
+  Result := True;
+  if not LoadStringsFromFile(TmpFile, Lines) then Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+    if Pos('ROOT\DISPLAY\', Uppercase(Lines[I])) > 0 then
+    begin
+      Log('Virtual display device node already present; skipping devcon install.');
+      Result := False;
+      Exit;
+    end;
 end;
 
 // pnputil /delete-driver needs the published oemXX.inf name, so enumerate and
@@ -269,9 +294,12 @@ begin
   Devcon := ExpandConstant('{app}\drivers\VDD\control\Dependencies\devcon.exe');
   if FileExists(Devcon) then
   begin
-    RunHiddenLogged(Devcon, 'remove "@ROOT\DISPLAY\0000"');
+    // Wildcard: repeated driver installs can leave ROOT\DISPLAY\0001.. behind, and the
+    // uninstaller must not orphan them (they reappear as ghost monitors in Settings).
+    RunHiddenLogged(Devcon, 'remove "@ROOT\DISPLAY\*"');
   end;
   RunHiddenLogged(ExpandConstant('{sys}\pnputil.exe'), '/remove-device "ROOT\DISPLAY\0000"');
+  RunHiddenLogged(ExpandConstant('{sys}\pnputil.exe'), '/remove-device "ROOT\DISPLAY\0001"');
   DeleteMttVddDriverPackages();
 end;
 
