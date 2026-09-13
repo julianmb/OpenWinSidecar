@@ -4,6 +4,37 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-13 (night) — One-click FFmpeg fix in the dashboard
+
+### Added
+- **Dashboard FFmpeg banner** (`MainWindow`): if `FindFfmpegExecutable()` comes up empty at
+  startup, a warning card appears above the display controls — "streaming falls back to
+  JPEG" — with an **Install FFmpeg** button that runs `winget install --id Gyan.FFmpeg` in
+  the background (portable install, no elevation), then re-resolves, hides itself on
+  success, and logs that new client sessions will use hardware HEVC. Turns the
+  silent-install "skipped FFmpeg" dead end into one click.
+- **`FfmpegBootstrap`** (Service/Encoding): winget locator (WindowsApps alias → PATH) +
+  `InstallFfmpegViaWingetAsync` with log callback. Mirrors the installer's winget fallback
+  and the documented manual command.
+- **`HevcStreamEncoder.ResetFfmpegCache()`**: the per-process FFmpeg path is cached once;
+  after a runtime install the cache is cleared so the next encoder start picks the new
+  binary up without an app restart.
+
+### Changed
+- `ResolveFfmpegExecutable` now returns **null** instead of a bare `"ffmpeg.exe"` when
+  nothing is found (the bare-name fallback could only ever fail at spawn: CreateProcess's
+  PATH search matches where.exe, and the app-local dir is covered by an explicit
+  candidate). Initialize's existing null-check handles it; the sink keeps degrading to JPEG.
+
+### Verified
+- 52/52 .NET + 12/12 viewer tests; `dotnet build -c Release` zero warnings.
+- Dashboard `--screenshot` render: all five cards lay out correctly after the banner row
+  insertion, banner correctly hidden when FFmpeg is present (the check runs in screenshot
+  mode too). The winget install button itself is exercised only on a machine without
+  FFmpeg — logic mirrors the installer's validated winget invocation.
+
+---
+
 ## 2026-09-13 (evening) — Release flow automated (tag → release + winget manifests)
 
 ### Added

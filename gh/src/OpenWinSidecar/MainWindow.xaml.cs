@@ -100,6 +100,7 @@ public partial class MainWindow : Window
             CmbDpi.SelectionChanged += CmbDpi_SelectionChanged;
             await RefreshDataAsync();
             _timer.Start();
+            await CheckFfmpegBannerAsync();
 
             if (_screenshotPath != null)
             {
@@ -927,6 +928,67 @@ public partial class MainWindow : Window
     }
 
     private void BtnOpenBrowser_Click(object sender, RoutedEventArgs e) => OpenWebViewer();
+
+    // ---- FFmpeg one-click fix ----
+
+    private bool _installingFfmpeg;
+
+    /// <summary>
+    /// Shows the FFmpeg banner when the HEVC dependency is missing. Resolution spawns
+    /// where.exe and can scan the WinGet tree (~100-300ms), so it runs off the UI thread.
+    /// </summary>
+    private async Task CheckFfmpegBannerAsync()
+    {
+        var ffmpeg = await Task.Run(
+            () => OpenWinSidecar.Service.Encoders.HevcStreamEncoder.FindFfmpegExecutable());
+        if (ffmpeg != null)
+        {
+            FfmpegBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+        TxtFfmpegDetail.Text = OpenWinSidecar.Service.Encoders.FfmpegBootstrap.FindWingetExecutable() != null
+            ? "Hardware HEVC needs the Gyan FFmpeg build. One-click install via winget (~170 MB download)."
+            : "Hardware HEVC needs the Gyan FFmpeg build, but winget was not found. Install it from a terminal: winget install --id Gyan.FFmpeg -e";
+        FfmpegBanner.Visibility = Visibility.Visible;
+    }
+
+    private async void BtnInstallFfmpeg_Click(object sender, RoutedEventArgs e)
+    {
+        if (_installingFfmpeg) return;
+        _installingFfmpeg = true;
+        BtnInstallFfmpeg.IsEnabled = false;
+        TxtFfmpegDetail.Text = "Installing Gyan.FFmpeg via winget — this downloads ~170 MB and can take a few minutes…";
+
+        try
+        {
+            await Task.Run(() =>
+                OpenWinSidecar.Service.Encoders.FfmpegBootstrap.InstallFfmpegViaWingetAsync(
+                    msg => Dispatcher.BeginInvoke(() => AppendLog(msg))));
+
+            // Re-resolve regardless of exit code: winget may have succeeded where a
+            // non-zero code means "already installed" (which is fine for us).
+            OpenWinSidecar.Service.Encoders.HevcStreamEncoder.ResetFfmpegCache();
+            var ffmpeg = await Task.Run(
+                () => OpenWinSidecar.Service.Encoders.HevcStreamEncoder.FindFfmpegExecutable());
+
+            if (ffmpeg != null)
+            {
+                FfmpegBanner.Visibility = Visibility.Collapsed;
+                AppendLog("[FFmpeg] FFmpeg is available — new client sessions use hardware HEVC.");
+                SetStatus("FFmpeg installed — hardware HEVC enabled");
+            }
+            else
+            {
+                TxtFfmpegDetail.Text = "Installation did not produce a usable FFmpeg. Install manually: winget install --id Gyan.FFmpeg -e (full build), then restart the app.";
+                AppendLog("[FFmpeg] FFmpeg still not found after the winget attempt.");
+            }
+        }
+        finally
+        {
+            BtnInstallFfmpeg.IsEnabled = true;
+            _installingFfmpeg = false;
+        }
+    }
 
     /// <summary>
     /// Appends a timestamped line to the log buffer and, if open, the separate log window.

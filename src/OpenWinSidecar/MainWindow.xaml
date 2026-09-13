@@ -303,12 +303,28 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
+                <!-- FFmpeg missing banner (visible only when the HEVC dependency is absent) -->
+                <Border Grid.Row="0" x:Name="FfmpegBanner" Visibility="Collapsed" BorderBrush="{StaticResource BadBorder}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,5" Background="{StaticResource BadBg}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="TxtFfmpegTitle" Text="FFmpeg not found — streaming falls back to low-quality JPEG" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Bad}" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TxtFfmpegDetail" Text="Hardware HEVC needs the Gyan FFmpeg build. One-click install via winget (~170 MB download)." FontSize="10.5" Foreground="{StaticResource TextSecondary}" Margin="0,1,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button x:Name="BtnInstallFfmpeg" Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="Install FFmpeg" MinWidth="110" VerticalAlignment="Center" Margin="8,0,0,0" Click="BtnInstallFfmpeg_Click"/>
+                    </Grid>
+                </Border>
+
                 <!-- Hero: Display Power (compact) -->
-                <Border Grid.Row="0" BorderBrush="#C9D8F2" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,5">
+                <Border Grid.Row="1" BorderBrush="#C9D8F2" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,5">
                     <Border.Effect>
                         <DropShadowEffect Color="#2563EB" Opacity="0.12" BlurRadius="12" ShadowDepth="0"/>
                     </Border.Effect>
@@ -332,7 +348,7 @@
                 </Border>
 
                 <!-- Connection (adapter + URL + QR) -->
-                <Border Grid.Row="1" Style="{StaticResource Card}" VerticalAlignment="Stretch">
+                <Border Grid.Row="2" Style="{StaticResource Card}" VerticalAlignment="Stretch">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -367,7 +383,7 @@
                 </Border>
 
                 <!-- Session (singular; live) -->
-                <Border Grid.Row="2" Style="{StaticResource Card}">
+                <Border Grid.Row="3" Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="Session" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TextTertiary}" Margin="0,0,0,6"/>
                         <Grid>
@@ -420,7 +436,7 @@
                 </Border>
 
                 <!-- Connected clients (the list; scrolls when there are several) -->
-                <Border Grid.Row="3" Style="{StaticResource Card}" Padding="8,5" VerticalAlignment="Stretch">
+                <Border Grid.Row="4" Style="{StaticResource Card}" Padding="8,5" VerticalAlignment="Stretch">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         <TextBlock x:Name="TxtClientsHeader" Text="Connected clients" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TextTertiary}" Margin="0,0,0,2"/>
@@ -464,7 +480,7 @@
                 </Border>
 
                 <!-- Advanced: maintenance + preferences in one visible section -->
-                <Border Grid.Row="4" Style="{StaticResource Card}">
+                <Border Grid.Row="5" Style="{StaticResource Card}">
                     <Expander x:Name="AdvancedExpander" Style="{StaticResource SectionExpander}" Header="Advanced / maintenance" IsExpanded="True">
                         <StackPanel Margin="0,3,0,0">
                             <WrapPanel Margin="0,0,0,2">
