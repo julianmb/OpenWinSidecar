@@ -4,6 +4,35 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-13 (evening) — Release flow automated (tag → release + winget manifests)
+
+### Added
+- **`release.yml`** (both workflow trees): tag-triggered (`v*`) release pipeline on
+  windows-latest — dotnet tests → self-contained single-file publish → Inno compile
+  (choco `innosetup`, ISCC path auto-resolved) → SHA-256 → GitHub Release (asset +
+  newest CHANGELOG section as notes, `--latest`) → **rewrites the three `winget/`
+  manifests (PackageVersion, InstallerUrl, InstallerSha256) and commits them to main**
+  (no CI loop: dotnet-ci/ios-ci path filters and the tag-only trigger don't match).
+  Idempotent per tag (re-upload asset + edit release). A manual `workflow_dispatch`
+  with `dry_run` builds everything and uploads an artifact without publishing.
+- **Single version source**: `MyAppVersion` in `installer/OpenWinSidecar.iss`. The
+  winget manifests are no longer hand-edited — the workflow owns them.
+
+### Changed
+- `tools/sync_gh_mirror.ps1` now **pulls the three winget manifests from the published
+  repo first**, so mirroring never reverts CI-authored values (winget/ stopped being a
+  local-edit file).
+- `gh/winget/README.md` rewritten for the new flow; `gh/CONTRIBUTING.md` gained a
+  "Release process" section (bump → test → tag → CI → winget-pkgs copy is the only
+  manual step).
+
+### Verified
+- Dry-run dispatch of the workflow on the published repo went green end-to-end
+  (tests + publish + ISCC compile + hash + artifact) — see the run linked in the
+  conversation. Tag path exercises the same steps plus release/manifest commit.
+
+---
+
 ## 2026-09-13 (later) — Silent installs made fully non-interactive (winget validation fix)
 
 ### Diagnosed (winget-pkgs PR #433549 round 1)

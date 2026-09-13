@@ -3,6 +3,24 @@
 
 $root = Split-Path -Parent $PSScriptRoot   # repo root (tools/ parent)
 
+# The published repo's winget/ manifests are maintained by the Release workflow
+# (version, InstallerUrl, InstallerSha256 rewritten on every tag push). Pull them
+# down FIRST so mirroring never reverts CI-authored values. winget/ is not a
+# local-edit file anymore — see gh/winget/README.md.
+Write-Output "Pulling winget manifests from the published repo (CI maintains them) ..."
+$wingetBase = "https://raw.githubusercontent.com/julianmb/OpenWinSidecar/main/winget"
+foreach ($f in @(
+    "julianmb.OpenWinSidecar.yaml",
+    "julianmb.OpenWinSidecar.installer.yaml",
+    "julianmb.OpenWinSidecar.locale.en-US.yaml")) {
+    try {
+        Invoke-WebRequest "$wingetBase/$f" -OutFile (Join-Path "$root\gh\winget" $f) -UseBasicParsing
+        Write-Output "  pulled $f"
+    } catch {
+        Write-Warning "  could not pull $f (offline?) - keeping the local copy"
+    }
+}
+
 Write-Output "Mirroring $root\src -> $root\gh\src ..."
 robocopy "$root\src" "$root\gh\src" /MIR /XD bin obj /NFL /NDL /NJH /NJS /NP | Select-Object -Last 5
 

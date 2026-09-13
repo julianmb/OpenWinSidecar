@@ -1,0 +1,176 @@
+name: Release
+
+# Cutting a release:
+#   1. Write the CHANGELOG section and bump `MyAppVersion` in installer/OpenWinSidecar.iss
+#      (that define is the single version source — winget manifests are maintained here).
+#   2. Test locally (dotnet test + viewer runtime test + an install/uninstall cycle).
+#   3. Commit, push, then tag:  git tag v0.1.1 && git push origin v0.1.1
+# This workflow builds the self-contained app, compiles the Inno installer, hashes it,
+# creates the GitHub Release (notes = newest CHANGELOG section), and rewrites the
+# winget manifests (version, InstallerUrl, InstallerSha256). The remaining manual step
+# is copying winget/ into microsoft/winget-pkgs and opening the submission PR.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build + test only (no release, no manifest commit)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build installer + release
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Read version from installer script
+        id: ver
+        shell: pwsh
+        run: |
+          $iss = Get-Content installer/OpenWinSidecar.iss -Raw
+          $m = [regex]::Match($iss, '(?m)^\s*#define MyAppVersion "([^"]+)"')
+          if (-not $m.Success) { throw 'MyAppVersion define not found in installer/OpenWinSidecar.iss' }
+          $v = $m.Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "asset=OpenWinSidecar-Setup-$v.exe" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v  Asset: OpenWinSidecar-Setup-$v.exe"
+
+      - name: Test
+        run: >
+          dotnet test tests/OpenWinSidecar.Service.Tests/OpenWinSidecar.Service.Tests.csproj
+          -c Release --nologo
+
+      - name: Publish (self-contained single file)
+        run: >
+          dotnet publish src/OpenWinSidecar/OpenWinSidecar.csproj -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+          -o installer/stage/app
+
+      - name: Compile installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source }
+          if (-not $iscc) { throw 'ISCC.exe not found after choco install innosetup' }
+          & $iscc installer/OpenWinSidecar.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+          Get-ChildItem installer/output
+
+      - name: Hash installer
+        id: hash
+        shell: pwsh
+        run: |
+          $exe = "installer/output/${{ steps.ver.outputs.asset }}"
+          if (-not (Test-Path $exe)) { throw "installer output not found: $exe" }
+          $h = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$h" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA-256: $h"
+
+      - name: Update winget manifests (version, url, hash)
+        if: ${{ github.event_name == 'push' }}
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $h = '${{ steps.hash.outputs.sha256 }}'
+          $url = "https://github.com/${{ github.repository }}/releases/download/$($env:GITHUB_REF_NAME)/${{ steps.ver.outputs.asset }}"
+          foreach ($f in Get-ChildItem winget/*.yaml) {
+            $t = Get-Content $f.FullName -Raw
+            $t = $t -replace '(?m)^PackageVersion: .*$', "PackageVersion: $v"
+            $t = $t -replace '(?m)^  InstallerUrl: .*$', "  InstallerUrl: $url"
+            $t = $t -replace '(?m)^  InstallerSha256: .*$', "  InstallerSha256: $h"
+            Set-Content $f.FullName $t -NoNewline
+            Write-Host "updated $($f.Name)"
+          }
+
+      - name: Commit winget manifests
+        if: ${{ github.event_name == 'push' }}
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add winget
+          if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'winget manifests already up to date'
+          } else {
+            git commit -m "Release $($env:GITHUB_REF_NAME): winget manifests (version, URL, SHA-256)"
+            if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
+            git push origin "HEAD:main"
+            if ($LASTEXITCODE -ne 0) { throw 'git push failed' }
+          }
+
+      - name: Extract release notes from CHANGELOG
+        if: ${{ github.event_name == 'push' }}
+        shell: pwsh
+        run: |
+          $raw = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($raw, '(?ms)^## .*?\r?\n(.*?)(?=\r?\n## |\z)')
+          $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Release $($env:GITHUB_REF_NAME)" }
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+
+      - name: Create or update GitHub release
+        if: ${{ github.event_name == 'push' }}
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $asset = "installer/output/${{ steps.ver.outputs.asset }}"
+          $title = "OpenWinSidecar ${{ steps.ver.outputs.version }}"
+          gh release view "$tag" 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$tag" "$asset" --clobber
+            gh release edit "$tag" --title "$title" --notes-file release-notes.md
+          } else {
+            gh release create "$tag" "$asset" --title "$title" --notes-file release-notes.md --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'gh release failed' }
+
+      - name: Upload build artifact (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWinSidecar-Setup-${{ steps.ver.outputs.version }}
+          path: installer/output/OpenWinSidecar-Setup-*.exe
+          retention-days: 7
+
+      - name: Job summary
+        shell: pwsh
+        run: |
+          @(
+            '## Release build',
+            "- Version: ``${{ steps.ver.outputs.version }}``",
+            "- Asset: ``${{ steps.ver.outputs.asset }}``",
+            "- SHA-256: ``${{ steps.hash.outputs.sha256 }}``",
+            '',
+            'On tag pushes the GitHub Release is published and `winget/` manifests are updated automatically.',
+            'Remaining manual step: copy `winget/` to microsoft/winget-pkgs at',
+            '`manifests/j/julianmb/OpenWinSidecar/<version>/` and open the submission PR.'
+          ) | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
