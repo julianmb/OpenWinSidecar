@@ -87,11 +87,19 @@ public sealed class HevcStreamEncoder : IDisposable
     {
         // Resolved once per process: this spawns `where.exe` and can scan the WinGet package
         // tree, which added ~100-300ms to every encoder start (and every forceidr/encoder
-        // restart). The path does not change at runtime.
+        // restart). The path does not change at runtime — unless the dashboard installs
+        // FFmpeg (one-click winget fix), which calls ResetFfmpegCache.
         if (_cachedFfmpegPath != null) return _cachedFfmpegPath;
         _cachedFfmpegPath = ResolveFfmpegExecutable();
         return _cachedFfmpegPath;
     }
+
+    /// <summary>
+    /// Forces the next <see cref="FindFfmpegExecutable"/> to re-resolve. Called by the
+    /// dashboard after installing FFmpeg at runtime so new client sessions pick up the
+    /// hardware encoder without an app restart.
+    /// </summary>
+    public static void ResetFfmpegCache() => _cachedFfmpegPath = null;
 
     private static string? ResolveFfmpegExecutable()
     {
@@ -131,17 +139,17 @@ public sealed class HevcStreamEncoder : IDisposable
             if (matches.Length > 0) return matches[0];
         }
 
-        // 4. Fall back to the bare name, resolved against the process PATH at spawn time.
-        //    If we got this far, none of the known locations had it — say so once, with the fix.
+        // 4. Nothing found anywhere we know to look. Say so once, with the fix, and make
+        //    the miss visible to callers (Initialize aborts; the sink degrades to JPEG).
         if (!_warnedFfmpegMissing)
         {
             _warnedFfmpegMissing = true;
             Console.WriteLine(
                 "[HEVC] FFmpeg was not found in PATH, the WinGet package tree, or next to the app. " +
-                "Install it with: winget install --id Gyan.FFmpeg -e (full build), then restart — " +
-                "streaming falls back to JPEG intra until it is available.");
+                "Install it with: winget install --id Gyan.FFmpeg -e (full build) — the dashboard's " +
+                "'Install FFmpeg' button does this too. Streaming falls back to JPEG intra meanwhile.");
         }
-        return "ffmpeg.exe";
+        return null;
     }
 
     public bool Initialize(int width, int height, int bitrateKbps = 4000, int framerate = 60, int pixelDepth = 8)
