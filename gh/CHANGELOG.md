@@ -4,6 +4,37 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-13 — Installer made idempotent: no more ghost virtual monitors
+
+### Root cause (found via ghost displays on the dev machine)
+- `devcon install` **unconditionally creates a new device node**, even when `ROOT\DISPLAY\0000`
+  already exists. Every reinstall therefore added a virtual monitor (`ROOT\DISPLAY\0001`,
+  `0002`, …) — Settings showed extra gray display tiles after the v0.1 install/uninstall test
+  cycles. Recreated deliberately: upgrade-installing with one node present grew to three.
+
+### Fixed (installer)
+- The device-node `[Run]` step is now gated by `Check: VddDeviceNodeAbsent` — a pnputil
+  `/enum-devices /class Display` scan for the (locale-independent) `ROOT\DISPLAY\` prefix.
+  Clean machines still get the node created; existing installs are left untouched.
+- Uninstall now removes **all** virtual display instances (`devcon remove "@ROOT\DISPLAY\*"`
+  plus pnputil fallbacks for 0000/0001) instead of only 0000, so accumulated ghosts are
+  cleaned up too.
+
+### Verified (live elevated cycles on the dev machine with 3 instances present)
+- Upgrade install over 3 existing instances: zero new nodes; setup log shows
+  "device node already present; skipping devcon install".
+- Uninstall: all 3 instances gone, DriverStore package gone, firewall gone, settings kept.
+- Final clean install: exactly one `ROOT\DISPLAY\0000`, Started; WMI shows one "VDD by MTT"
+  alongside the two physical monitors. The stray instances were removed the same way.
+
+### Changed (release)
+- Rebuilt and re-uploaded `OpenWinSidecar-Setup-0.1.0.exe` to the v0.1 release (same-day
+  replacement before any distribution; previous asset had ~zero exposure). New SHA-256
+  `9317b6ba…bbfebec` recorded in the winget manifest; PR #433549 branch updated so
+  validation restarts against the fixed binary (CLA already green).
+
+---
+
 ## 2026-09-12 — v0.1 release: installer verified end-to-end, FFmpeg made a winget dependency
 
 ### Fixed (installer, all verified by live elevated install + uninstall cycles on the dev machine)
