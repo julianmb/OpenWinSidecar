@@ -186,6 +186,14 @@ end;
 
 procedure WarnFfmpegMissing(const Reason: String);
 begin
+  // Silent installs (winget, deployment tools, validation VMs) must never block on a
+  // dialog — log instead; the app repeats the instruction at runtime.
+  if WizardSilent() then
+  begin
+    Log('FFmpeg missing (' + Reason + ') — silent install: not showing a prompt. ' +
+      'Install with: winget install --id Gyan.FFmpeg -e');
+    Exit;
+  end;
   MsgBox('OpenWinSidecar streams video as HEVC using FFmpeg, which was not found on this computer. ' + Reason + #13#10#13#10 +
     'The installation will continue, but streaming will fall back to lower-quality JPEG until FFmpeg is installed. Run:' + #13#10#13#10 +
     '    winget install --id Gyan.FFmpeg -e' + #13#10#13#10 +
@@ -321,6 +329,13 @@ begin
   end;
   if FfmpegPresent() then
     Log('FFmpeg already present; skipping winget install.')
+  else if WizardSilent() then
+    // Silent installs (incl. winget validation) must stay fully non-interactive:
+    // no winget download inside the install, no dialogs. Winget-driven installs get
+    // FFmpeg from the manifest's PackageDependencies; everyone else gets the
+    // actionable log line (and the same instruction at app runtime).
+    Log('FFmpeg not found; silent install skips the winget attempt. ' +
+      'Install with: winget install --id Gyan.FFmpeg -e (or rely on the winget package dependency).')
   else
     InstallFfmpegViaWinget();
 end;

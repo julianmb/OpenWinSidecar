@@ -4,6 +4,32 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-13 (later) — Silent installs made fully non-interactive (winget validation fix)
+
+### Diagnosed (winget-pkgs PR #433549 round 1)
+- **Installation Validation FAILED: "failed to install without user input."** The validation
+  VM has no FFmpeg, so the installer tried the winget fallback and — when winget is missing
+  or fails — raised a **MsgBox**, which blocks forever on a headless VM. A silent installer
+  must never open a window.
+
+### Fixed (installer + manifest)
+- `WarnFfmpegMissing` now logs instead of prompting under `WizardSilent()`.
+- Silent installs also **skip the winget attempt entirely** (no 170 MB download inside the
+  install, zero input paths): winget-driven installs get FFmpeg from the manifest's
+  `PackageDependencies`; other silent deployments get the actionable log line, and the app
+  repeats it at runtime. Interactive installs keep the winget attempt + prompt on failure.
+- Manifest now declares `SilentWithProgress: /SILENT` alongside `Silent:` (the bot's
+  failure template asks for both).
+
+### Verified
+- Silent install on the dev machine: completes immediately, ffmpeg-present path logged,
+  idempotency gate holds ("skipping devcon install"), exactly one VDD instance. The only
+  MsgBox call site is behind `if WizardSilent() then Exit`.
+- `winget validate` passes; release asset replaced (SHA-256 `96cb141c…af8833`), PR branch
+  updated — round 2 validation runs against the non-interactive binary.
+
+---
+
 ## 2026-09-13 — Installer made idempotent: no more ghost virtual monitors
 
 ### Root cause (found via ghost displays on the dev machine)
