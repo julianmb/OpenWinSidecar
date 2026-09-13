@@ -46,6 +46,28 @@ dotnet run --project src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj
 4. Ensure the solution compiles with `dotnet build OpenWinSidecar.slnx` with zero errors or warnings.
 5. Submit a descriptive Pull Request detailing the changes and testing results.
 
+## 🚢 Release process (maintainers)
+
+The [Release workflow](.github/workflows/release.yml) automates everything after the tag;
+`installer/OpenWinSidecar.iss`'s `MyAppVersion` is the single version source.
+
+1. Bump `MyAppVersion` (e.g. `"0.1.1"`) and write the CHANGELOG section — its newest `##`
+   block becomes the release notes automatically.
+2. Verify locally: `dotnet test`, `node tests/viewer.runtime.test.cjs`, and one elevated
+   install/uninstall cycle of a locally compiled installer.
+3. Commit, then cut the release:
+   ```powershell
+   git tag v0.1.1
+   git push origin v0.1.1
+   ```
+4. The workflow runs the tests, publishes the self-contained single file, compiles the
+   installer with Inno Setup, creates the GitHub Release with the asset, prints the
+   SHA-256, and rewrites the `winget/` manifests (version, InstallerUrl, InstallerSha256).
+5. Submit to winget-pkgs (see [winget/README.md](winget/README.md)) — the only manual step.
+   Re-running the workflow for the same tag is safe (idempotent): it re-uploads the asset
+   and edits the existing release. A manual "Run workflow" with the **dry_run** checkbox
+   builds everything without publishing.
+
 ---
 
 ## 📄 License
