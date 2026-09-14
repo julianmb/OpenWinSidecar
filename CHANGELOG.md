@@ -4,7 +4,33 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-14 — Silent installs can no longer hang: driver ops are fire-and-forget
+
+### Diagnosed (winget-pkgs PR #433549 round 2)
+- **Installation Validation failed AGAIN with the same verdict** — and the check-run log
+  showed why: the harness ran our installer for **2h04m** (04:39 InProgress → 06:22
+  Completed ❌) before killing it at its timeout. Our installer finishes in ~1 minute on
+  any real machine, so it hung their VM. The blocker: `devcon install` **waits for the
+  device install to complete**, and on a VM whose display adapter can't start an IddCx
+  driver that wait never ends. The round-1 MsgBox fix was necessary but not sufficient —
+  a silent installer must not block on the driver subsystem at all.
+
+### Fixed (installer)
+- [Run] driver steps are now **dual-variant**: interactive installs keep the waited
+  behavior with honest status messages (`Check: …AndInteractive`); **silent installs run
+  pnputil staging and devcon node creation fire-and-forget** (`Flags: runhidden nowait`,
+  `Check: …AndSilent`). Setup now always terminates on its own; the virtual display
+  appears moments later either way.
+
+### Verified
+- Timed silent cycle on the dev machine: uninstall clean (0 nodes) → **silent install
+  wall time 12.3 s** → `ROOT\DISPLAY\0000` appeared ~2 s after setup exited, Started.
+  Whatever the driver subsystem does on Microsoft's VM, setup can no longer hang behind it.
+
+---
+
 ## 2026-09-13 (night) — One-click FFmpeg fix in the dashboard
+
 
 ### Added
 - **Dashboard FFmpeg banner** (`MainWindow`): if `FindFfmpegExecutable()` comes up empty at
