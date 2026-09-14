@@ -4,6 +4,32 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-14 — Release pipeline: CI smoke test + automated winget-pkgs PR
+
+### Added
+- **CI installer smoke test.** The release workflow now runs the built installer silently
+  on the `windows-latest` runner with a 90-second timeout, then verifies the uninstall
+  registry key (version match), app exe, `vdd_settings.xml`, and firewall rule are all in
+  place before any release or winget PR is created. If the installer ever blocks again —
+  a new dialog, a hanging driver op — the release fails before it ships instead of
+  passing the problem to Microsoft's validators. A dry-run dispatch runs the smoke test too,
+  so regressions are caught before tagging.
+- **Automated winget-pkgs submission PR.** On a tag push, the workflow clones the
+  `julianmb/winget-pkgs` fork, syncs it from upstream master, copies the three CI-generated
+  manifests into `manifests/j/julianmb/OpenWinSidecar/<version>/`, and opens the submission
+  PR to `microsoft/winget-pkgs` via `gh pr create`. Re-runs update the existing PR
+  (idempotent). Requires a `WINGET_PAT` secret (fine-grained PAT scoped to
+  `microsoft/winget-pkgs`); without it the release still publishes and the step skips with
+  a clear warning. Setup instructions are in `winget/README.md`.
+
+### Docs
+- `winget/README.md` rewritten for the automated flow (CI-maintained manifests, PAT setup,
+  manual fallback).
+- `CONTRIBUTING.md` release-process section updated: the winget PR is no longer "the one
+  manual step" — it's automated by the workflow.
+
+---
+
 ## 2026-09-14 — v0.1.1: installer robustness for real machines and headless VMs
 
 Three winget-validation failures taught us what a clean, silent, GPU-less machine does to an
