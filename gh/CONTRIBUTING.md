@@ -61,12 +61,16 @@ The [Release workflow](.github/workflows/release.yml) automates everything after
    git push origin v0.1.1
    ```
 4. The workflow runs the tests, publishes the self-contained single file, compiles the
-   installer with Inno Setup, creates the GitHub Release with the asset, prints the
-   SHA-256, and rewrites the `winget/` manifests (version, InstallerUrl, InstallerSha256).
-5. Submit to winget-pkgs (see [winget/README.md](winget/README.md)) — the only manual step.
-   Re-running the workflow for the same tag is safe (idempotent): it re-uploads the asset
-   and edits the existing release. A manual "Run workflow" with the **dry_run** checkbox
-   builds everything without publishing.
+   installer with Inno Setup, **smoke-tests the silent install on the runner** (catches
+   hangs and dialogs before shipping — the three winget-pkgs validation failures that
+   taught us this are in the CHANGELOG), creates the GitHub Release with the asset +
+   SHA-256, rewrites the `winget/` manifests, and **opens the winget-pkgs submission PR
+   automatically** (requires the `WINGET_PAT` secret — see
+   [winget/README.md](winget/README.md)).
+5. Re-running the workflow for the same tag is safe (idempotent): it re-uploads the
+   asset, re-runs the smoke test, and updates the existing winget PR. A manual "Run
+   workflow" with the **dry_run** checkbox builds everything (including the smoke test)
+   without publishing.
 
 ---
 

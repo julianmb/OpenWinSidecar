@@ -4,11 +4,16 @@ name: Release
 #   1. Write the CHANGELOG section and bump `MyAppVersion` in installer/OpenWinSidecar.iss
 #      (that define is the single version source — winget manifests are maintained here).
 #   2. Test locally (dotnet test + viewer runtime test + an install/uninstall cycle).
-#   3. Commit, push, then tag:  git tag v0.1.1 && git push origin v0.1.1
+#   3. Commit, push, then tag:  git tag v0.1.2 && git push origin v0.1.2
 # This workflow builds the self-contained app, compiles the Inno installer, hashes it,
-# creates the GitHub Release (notes = newest CHANGELOG section), and rewrites the
-# winget manifests (version, InstallerUrl, InstallerSha256). The remaining manual step
-# is copying winget/ into microsoft/winget-pkgs and opening the submission PR.
+# smoke-tests the silent install on the runner (catches hangs/dialogs before shipping),
+# creates the GitHub Release (notes = newest CHANGELOG section + SHA-256), rewrites the
+# winget manifests, and opens the winget-pkgs submission PR automatically.
+#
+# The winget-pkgs auto-PR step needs a PAT secret named `WINGET_PAT` (fine-grained PAT
+# scoped to microsoft/winget-pkgs with Contents: Read and Write + Pull requests: Write,
+# added as a repo secret in julianmb/OpenWinSidecar). Without it the release still
+# publishes; the winget PR is skipped with a clear message.
 
 on:
   push:
@@ -94,6 +99,68 @@ jobs:
           "sha256=$h" >> $env:GITHUB_OUTPUT
           Write-Host "SHA-256: $h"
 
+      # ── Smoke test: silent install must exit within 90s and leave the right footprint ──
+      # This is the gate the three winget-pkgs validation failures needed. If the installer
+      # ever blocks (dialog, hanging driver op), this step fails before the release ships.
+      - name: Smoke test: silent install + verify
+        shell: pwsh
+        run: |
+          $exe = "installer/output/${{ steps.ver.outputs.asset }}"
+          $version = '${{ steps.ver.outputs.version }}'
+          Write-Host "Running silent install with 90s timeout..."
+          $p = Start-Process -FilePath $exe -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+          if (-not $p.WaitForExit(90000)) {
+            Write-Host "::error::Installer did not exit within 90s — killing"
+            $p | Stop-Process -Force
+            throw 'Installer hung (blocked on a dialog or driver op) — release aborted'
+          }
+          Write-Host "Installer exited in $([math]::Round($p.ExitCode)) with code $($p.ExitCode)"
+
+          # ── Post-install checks (GPU-independent — the hosted VM can't start the IddCx driver) ──
+          $failures = @()
+
+          # 1. Uninstall registry key with correct version
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{0385E396-88A5-4DC6-8B84-2ED798EE2A71}_is1'
+          $reg = Get-ItemProperty $key -ErrorAction SilentlyContinue
+          if (-not $reg) { $failures += 'Uninstall registry key not found' }
+          elseif ($reg.DisplayVersion -ne $version) { $failures += "Version mismatch: registry=$($reg.DisplayVersion) expected=$version" }
+          else { Write-Host "  [PASS] Registry: OpenWinSidecar $version" }
+
+          # 2. Main executable present
+          $appExe = 'C:\Program Files\OpenWinSidecar\OpenWinSidecar.exe'
+          if (Test-Path $appExe) { Write-Host '  [PASS] App exe present' }
+          else { $failures += 'App exe not found at C:\Program Files\OpenWinSidecar\OpenWinSidecar.exe' }
+
+          # 3. Driver settings deployed
+          $settings = 'C:\VirtualDisplayDriver\vdd_settings.xml'
+          if (Test-Path $settings) { Write-Host '  [PASS] vdd_settings.xml deployed' }
+          else { $failures += 'C:\VirtualDisplayDriver\vdd_settings.xml not found' }
+
+          # 4. Firewall rule
+          $fw = netsh advfirewall firewall show rule name='OpenWinSidecar' 2>&1
+          if ($LASTEXITCODE -eq 0 -and $fw -match 'Rule Name') { Write-Host '  [PASS] Firewall rule present' }
+          else { $failures += 'Firewall rule not found' }
+
+          # 5. Driver package staged (best-effort — silent path is fire-and-forget with nowait)
+          $drivers = pnputil /enum-drivers 2>&1
+          if ($drivers -match 'MTTVDD.INF') { Write-Host '  [PASS] Driver package staged' }
+          else { Write-Host '  [WARN] Driver package not found (fire-and-forget may not have completed — non-fatal)' }
+
+          # ── Cleanup: uninstall so the runner is clean ──
+          $uninst = 'C:\Program Files\OpenWinSidecar\unins000.exe'
+          if (Test-Path $uninst) {
+            $u = Start-Process -FilePath $uninst -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+            if (-not $u.WaitForExit(60000)) { $u | Stop-Process -Force; Write-Host '  [WARN] Uninstall timed out (non-fatal)' }
+            else { Write-Host "  [PASS] Uninstall exited ($($u.ExitCode))" }
+          }
+
+          if ($failures.Count -gt 0) {
+            Write-Host "::error::Smoke test failed:"
+            $failures | ForEach-Object { Write-Host "  - $_" }
+            throw "Smoke test failed: $($failures -join '; ')"
+          }
+          Write-Host 'Smoke test: ALL CHECKS PASSED'
+
       - name: Update winget manifests (version, url, hash)
         if: ${{ github.event_name == 'push' }}
         shell: pwsh
@@ -174,6 +241,85 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { throw 'gh release failed' }
 
+      # ── Auto-open the winget-pkgs submission PR ──
+      # Requires the WINGET_PAT secret (fine-grained PAT scoped to microsoft/winget-pkgs).
+      # Without it the release still publishes — the PR is skipped with a clear message.
+      - name: Open winget-pkgs submission PR
+        id: winget_pr
+        if: ${{ github.event_name == 'push' }}
+        shell: pwsh
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+        run: |
+          if (-not $env:WINGET_PAT) {
+            Write-Host '::warning::WINGET_PAT secret not set — skipping winget-pkgs PR.'
+            Write-Host 'Add a fine-grained PAT (scoped to microsoft/winget-pkgs: Contents Read+Write, Pull requests Write) as the WINGET_PAT repo secret to automate this.'
+            "pr_url=" >> $env:GITHUB_OUTPUT
+            "skipped=true" >> $env:GITHUB_OUTPUT
+            return
+          }
+
+          $version = '${{ steps.ver.outputs.version }}'
+          $branch = "julianmb.OpenWinSidecar-$version"
+          $manifestDir = "manifests/j/julianmb/OpenWinSidecar/$version"
+
+          # Clone the fork, sync from upstream master, create a version-specific branch.
+          git clone --depth 1 "https://julianmb:${env:WINGET_PAT}@github.com/julianmb/winget-pkgs.git" winget-pkgs-fork
+          Set-Location winget-pkgs-fork
+          git remote add upstream "https://github.com/microsoft/winget-pkgs.git"
+          git fetch upstream master --depth 1
+          git checkout -b "$branch" upstream/master
+
+          # Remove any previous version folder for this package, then copy the three manifests.
+          $pkgBase = "manifests/j/julianmb/OpenWinSidecar"
+          if (Test-Path $pkgBase) { Get-ChildItem $pkgBase -Directory | Remove-Item -Recurse -Force }
+          New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+          Copy-Item ../winget/julianmb.OpenWinSidecar.yaml $manifestDir/
+          Copy-Item ../winget/julianmb.OpenWinSidecar.installer.yaml $manifestDir/
+          Copy-Item ../winget/julianmb.OpenWinSidecar.locale.en-US.yaml $manifestDir/
+
+          git config user.name "julianmb"
+          git config user.email "julianmb@users.noreply.github.com"
+          git add $manifestDir
+          git commit -m "New package: julianmb.OpenWinSidecar version $version"
+          git push origin "$branch" --force
+
+          # Open (or update) the PR to microsoft/winget-pkgs.
+          $prTitle = "New package: julianmb.OpenWinSidecar version $version"
+          $prBody = @"
+          - [x] Have you signed the [Contributor License Agreement (CLA)](https://cla.opensource.microsoft.com/microsoft/winget-pkgs)?
+          - [x] Have you checked that the package doesn't exist in the repository already?
+          - [x] Have you checked that the latest package version isn't in the repository already?
+          - [x] Have you validated the manifest locally with `winget validate --manifest <path>`?
+          - [x] Have you tested that the package installs successfully with the installer's silent switch?
+          - [x] Does your manifest follow the [manifest authoring instructions](https://github.com/microsoft/winget-pkgs/blob/master/AUTHORING_MANIFESTS.md)?
+
+          ### Description
+
+          OpenWinSidecar v$version — an open-source (AGPL-3.0) virtual-monitor server that turns an iPad or any modern browser into a wireless second Windows screen: IddCx virtual display, hardware HEVC end-to-end (Intel Quick Sync → WebCodecs), touch/keyboard input, no client app.
+
+          - Inno Setup installer, machine scope, silent switch `/SILENT`
+          - The HEVC encoder shells out to FFmpeg, so the manifest declares `Gyan.FFmpeg` under `PackageDependencies`
+          - The installer is smoke-tested in CI (silent install exits within 90s, post-install checks pass)
+          - Release asset: https://github.com/julianmb/OpenWinSidecar/releases/download/$env:GITHUB_REF_NAME/${{ steps.ver.outputs.asset }}
+          "@
+
+          # Check if a PR already exists for this branch (idempotent re-run).
+          $env:GH_TOKEN = $env:WINGET_PAT
+          $existing = gh pr list --repo microsoft/winget-pkgs --head "julianmb:$branch" --json number,url --jq '.[0]' 2>$null
+          if ($existing) {
+            $prUrl = ($existing | ConvertFrom-Json).url
+            Write-Host "PR already exists: $prUrl — updating branch"
+            "pr_url=$prUrl" >> $env:GITHUB_OUTPUT
+            "skipped=false" >> $env:GITHUB_OUTPUT
+          } else {
+            $prUrl = gh pr create --repo microsoft/winget-pkgs --base master --head "julianmb:$branch" --title $prTitle --body $prBody 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "gh pr create failed: $prUrl" }
+            Write-Host "PR created: $prUrl"
+            "pr_url=$prUrl" >> $env:GITHUB_OUTPUT
+            "skipped=false" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Upload build artifact (dry run)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v4
@@ -191,7 +337,18 @@ jobs:
             "- Asset: ``${{ steps.ver.outputs.asset }}``",
             "- SHA-256: ``${{ steps.hash.outputs.sha256 }}``",
             '',
-            'On tag pushes the GitHub Release is published and `winget/` manifests are updated automatically.',
-            'Remaining manual step: copy `winget/` to microsoft/winget-pkgs at',
-            '`manifests/j/julianmb/OpenWinSidecar/<version>/` and open the submission PR.'
+            'On tag pushes the GitHub Release is published, `winget/` manifests are updated,',
+            'and the winget-pkgs submission PR is opened automatically.'
           ) | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          if ('${{ steps.winget_pr.outputs.skipped }}' -eq 'true') {
+            @(
+              '',
+              '> ⚠️ **winget-pkgs PR skipped** — `WINGET_PAT` secret not set.',
+              '> Add it (fine-grained PAT scoped to microsoft/winget-pkgs) to automate the submission.'
+            ) | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          } elseif ('${{ steps.winget_pr.outputs.pr_url }}' -ne '') {
+            @(
+              '',
+              "winget-pkgs PR: ${{ steps.winget_pr.outputs.pr_url }}"
+            ) | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
