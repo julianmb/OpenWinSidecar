@@ -72,13 +72,21 @@ Source: "..\drivers\VDD\vdd_settings.xml"; DestDir: "{#VddSettingsDir}"; Flags: 
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
+; Driver ops, dual-variant: interactive installs WAIT (honest status + completion);
+; SILENT installs (winget, validation VMs, deployment tools) run them FIRE-AND-FORGET.
+; devcon in particular waits for the device install to complete, which on a VM whose
+; GPU can't start an IddCx driver blocks forever — the winget-pkgs validation harness
+; killed our silent install at its 2h timeout twice because of that. Setup must always
+; terminate on its own; the device node appears moments later either way.
 ; Stage the driver package into the DriverStore (gives us the oemXX.inf name
 ; for clean uninstall). Idempotent.
-Filename: "{sys}\pnputil.exe"; Parameters: "/add-driver ""{app}\drivers\VDD\MttVDD.inf"" /install"; Flags: runhidden; StatusMsg: "Installing virtual display driver..."
+Filename: "{sys}\pnputil.exe"; Parameters: "/add-driver ""{app}\drivers\VDD\MttVDD.inf"" /install"; Flags: runhidden; StatusMsg: "Installing virtual display driver..."; Check: NotSilent
+Filename: "{sys}\pnputil.exe"; Parameters: "/add-driver ""{app}\drivers\VDD\MttVDD.inf"" /install"; Flags: runhidden nowait; Check: IsSilent
 ; Create the root-enumerated device node, but ONLY when none exists — see
 ; VddDeviceNodeAbsent. pnputil /add-driver alone only stages the package;
 ; without this step the virtual monitor never appears on a clean machine.
-Filename: "{app}\drivers\VDD\control\Dependencies\devcon.exe"; Parameters: "install ""{app}\drivers\VDD\control\SignedDrivers\x86\VDD\MttVDD.inf"" Root\MttVDD"; Flags: runhidden; StatusMsg: "Creating virtual display device..."; Check: VddDeviceNodeAbsent
+Filename: "{app}\drivers\VDD\control\Dependencies\devcon.exe"; Parameters: "install ""{app}\drivers\VDD\control\SignedDrivers\x86\VDD\MttVDD.inf"" Root\MttVDD"; Flags: runhidden; StatusMsg: "Creating virtual display device..."; Check: VddDeviceNodeAbsentAndInteractive
+Filename: "{app}\drivers\VDD\control\Dependencies\devcon.exe"; Parameters: "install ""{app}\drivers\VDD\control\SignedDrivers\x86\VDD\MttVDD.inf"" Root\MttVDD"; Flags: runhidden nowait; Check: VddDeviceNodeAbsentAndSilent
 ; Allow inbound streaming traffic on private networks.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""OpenWinSidecar"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=private"; Flags: runhidden; StatusMsg: "Configuring firewall..."
 ; Offer to launch (skipped on silent installs).
@@ -240,6 +248,18 @@ begin
     Log(Format('%s could not be launched.', [Exe]));
 end;
 
+// [Run] Check helpers: interactive installs wait on the driver ops; silent ones
+// must never block (see the [Run] section comment).
+function IsSilent(): Boolean;
+begin
+  Result := WizardSilent();
+end;
+
+function NotSilent(): Boolean;
+begin
+  Result := not WizardSilent();
+end;
+
 // devcon install unconditionally CREATES a new device node, so re-running it on a
 // machine that already has one adds a ghost monitor (ROOT\DISPLAY\0001, 0002, ...).
 // Gate the [Run] entry on "no virtual display instance exists yet" — pnputil lists
@@ -261,6 +281,16 @@ begin
       Result := False;
       Exit;
     end;
+end;
+
+function VddDeviceNodeAbsentAndInteractive(): Boolean;
+begin
+  Result := VddDeviceNodeAbsent() and NotSilent();
+end;
+
+function VddDeviceNodeAbsentAndSilent(): Boolean;
+begin
+  Result := VddDeviceNodeAbsent() and IsSilent();
 end;
 
 // pnputil /delete-driver needs the published oemXX.inf name, so enumerate and
