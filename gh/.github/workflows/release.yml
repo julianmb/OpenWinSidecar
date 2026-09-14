@@ -135,6 +135,27 @@ jobs:
           $raw = Get-Content CHANGELOG.md -Raw
           $m = [regex]::Match($raw, '(?ms)^## .*?\r?\n(.*?)(?=\r?\n## |\z)')
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Release $($env:GITHUB_REF_NAME)" }
+          # Users are told to verify the download against the release notes — always
+          # include the SHA-256 of the attached installer.
+          $hash = '${{ steps.hash.outputs.sha256 }}'
+          $asset = '${{ steps.ver.outputs.asset }}'
+          $lines = @(
+            '',
+            '## Verify your download',
+            '',
+            'The installer is not code-signed yet, so SmartScreen may show "Windows protected your PC" — choose **More info → Run anyway** after checking the hash:',
+            '',
+            '```',
+            "SHA-256: $hash",
+            '```',
+            '',
+            'Verify in PowerShell:',
+            '',
+            '```',
+            "Get-FileHash .\$asset -Algorithm SHA256",
+            '```'
+          )
+          $notes = $notes + [Environment]::NewLine + ($lines -join [Environment]::NewLine)
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
 
       - name: Create or update GitHub release
