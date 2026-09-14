@@ -102,7 +102,7 @@ jobs:
       # ── Smoke test: silent install must exit within 90s and leave the right footprint ──
       # This is the gate the three winget-pkgs validation failures needed. If the installer
       # ever blocks (dialog, hanging driver op), this step fails before the release ships.
-      - name: Smoke test: silent install + verify
+      - name: "Smoke test: silent install + verify"
         shell: pwsh
         run: |
           $exe = "installer/output/${{ steps.ver.outputs.asset }}"
