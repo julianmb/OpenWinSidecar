@@ -277,9 +277,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Loads the app icon for the tray. The .ico sits next to the executable (copied via
-    /// ApplicationIcon); fall back through AppDomain base directory, then the repo source
-    /// tree, so the tray icon works from `dotnet run` as well as the published exe.
+    /// Loads the app icon for the tray. Tries the .ico file next to the executable first
+    /// (copied via the csproj None item in a normal build), then falls back to the icon
+    /// embedded in the exe via &lt;ApplicationIcon&gt; — which is the only copy that
+    /// survives a self-contained single-file publish (None items aren't extracted).
     /// </summary>
     private static Icon? LoadAppIcon()
     {
@@ -302,6 +303,14 @@ public partial class MainWindow : Window
                     using var stream = File.OpenRead(full);
                     return new Icon(stream);
                 }
+            }
+
+            // Self-contained single-file publish: the .ico file isn't on disk, but the
+            // icon is embedded in the exe via <ApplicationIcon>. Extract it from there.
+            var exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+            {
+                return System.Drawing.Icon.ExtractAssociatedIcon(exePath);
             }
         }
         catch { }
