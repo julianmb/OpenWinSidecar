@@ -16,7 +16,7 @@
 ; app degrades to JPEG and tells the user what to install.
 
 #define MyAppName "OpenWinSidecar"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #define MyAppPublisher "julianmb"
 #define MyAppURL "https://github.com/julianmb/OpenWinSidecar"
 #define MyAppExeName "OpenWinSidecar.exe"

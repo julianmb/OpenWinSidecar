@@ -4,6 +4,37 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-14 — v0.1.1: installer robustness for real machines and headless VMs
+
+Three winget-validation failures taught us what a clean, silent, GPU-less machine does to an
+installer built on one dev box. This release makes the Windows installer survive all of it.
+
+### Fixed
+- **Ghost virtual monitors eliminated.** `devcon install` unconditionally creates a new
+  device node, so reinstalls stacked up `ROOT\DISPLAY\0001, 0002, …` (Settings showed extra
+  gray display tiles). Node creation now runs only when no virtual display exists, and
+  uninstall removes **all** instances + the DriverStore package (previously only 0000).
+- **Silent installs never hang.** Two headless-VM hang sources removed: the FFmpeg-missing
+  MsgBox (silent installs now log; interactive keeps the prompt) and the driver operations
+  themselves — in silent installs pnputil staging and devcon node creation run
+  **fire-and-forget**, so setup terminates even where an IddCx driver can never start.
+  Verified: silent install wall time **12.3 s**, virtual display appears ~2 s later.
+- **FFmpeg made a real dependency.** The installer detects FFmpeg like the runtime and
+  installs `Gyan.FFmpeg` via winget when missing (interactive); winget installs declare it
+  as a package dependency. No FFmpeg at all still works — the app degrades to JPEG and
+  tells you exactly what to install.
+
+### Added
+- **One-click FFmpeg fix in the dashboard**: if FFmpeg is missing, the app shows a warning
+  banner with an *Install FFmpeg* button (background winget install, auto re-resolve — no
+  restart needed).
+
+### Notes
+- The installer is not code-signed; the release notes carry the SHA-256 to verify your
+  download. `winget install --id julianmb.OpenWinSidecar` is pending Microsoft review.
+
+---
+
 ## 2026-09-14 — Silent installs can no longer hang: driver ops are fire-and-forget
 
 ### Diagnosed (winget-pkgs PR #433549 round 2)
