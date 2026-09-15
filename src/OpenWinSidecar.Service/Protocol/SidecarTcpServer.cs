@@ -71,6 +71,13 @@ public class SidecarTcpServer : IDisposable
                 // (producer drops frames — see ClientFrameSink _busy handoff) instead of
                 // silently buffering ~0.5s of video that the client will render late.
                 client.SendBufferSize = 65536;
+                // Enable TCP keepalive so the OS detects dead peers (iPad asleep, Wi-Fi
+                // lost, process killed) within ~30s instead of holding a half-open
+                // connection for minutes-to-hours. This complements the app-level
+                // stale-client sweep that evicts sinks with no recent activity.
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                client.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+                client.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
                 lock (_activeClients) { _activeClients.Add(client); }
                 Console.WriteLine($"[TCP Server] Client connected on port {port} from {client.Client.RemoteEndPoint}");
 
@@ -539,10 +546,16 @@ public class SidecarTcpServer : IDisposable
                     int bytesRead = await stream.ReadAsync(wsBuffer, sessionToken);
                     if (bytesRead <= 0) break;
 
+                    sink.MarkActivity();
                     assembler.OnData(wsBuffer, bytesRead, HandleClientMessage);
                 }
                 catch { break; }
             }
+            // The input loop exited — the client is gone (half-close, RST, or dead peer).
+            // Cancel the session so the consumer loop stops sending into a dead socket and
+            // the sink gets disposed, removing it from the active-clients list. Without this
+            // the consumer loop keeps running and the stale client lingers in the UI forever.
+            try { sessionCts.Cancel(); } catch { }
         }, token);
 
         // Consumer loop: the hub's display producer composes frames into the sink and

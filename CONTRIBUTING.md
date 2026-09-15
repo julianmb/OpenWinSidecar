@@ -74,5 +74,30 @@ The [Release workflow](.github/workflows/release.yml) automates everything after
 
 ---
 
+## 🔏 Code signing
+
+The installer is **not** code-signed, so Windows SmartScreen may show "Windows protected
+your PC." Users choose **More info → Run anyway** after verifying the SHA-256 hash in the
+release notes:
+
+```powershell
+Get-FileHash .\OpenWinSidecar-Setup-0.1.1.exe -Algorithm SHA256
+```
+
+### Adding signing later (optional)
+
+The release workflow has a conditional **Sign installer** step that runs when the
+`SIGNING_CERT_THUMBPRINT` secret is set. To enable:
+
+1. Obtain a code signing certificate (OV ~$100–200/yr, or
+   [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) ~$10/mo).
+   EV certs (~$300–400/yr) additionally bypass SmartScreen entirely.
+2. Install the cert in the Windows certificate store (Local Machine → Personal).
+3. Add the cert thumbprint as a repo secret named `SIGNING_CERT_THUMBPRINT`
+   (Settings → Secrets and variables → Actions).
+4. The next release will sign the installer before hashing — no other changes needed.
+
+---
+
 ## 📄 License
 By contributing to OpenWinSidecar, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0](LICENSE).

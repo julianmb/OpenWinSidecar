@@ -378,7 +378,10 @@ public partial class MainWindow : Window
 
         TxtServiceState.Text = isRunning ? "Running" : "Stopped";
 
-        // Hero card: single source of truth for the iPad display state
+        // Hero card: the display state distinguishes "driver disabled / error / missing"
+        // from the normal "off, ready to turn on" so the user knows *why* Turn on isn't
+        // working instead of hitting a dead-end "Off" with no explanation.
+        var deviceState = _manager.DeviceState;
         if (isDisplayOn)
         {
             var virtualMonitor = _manager.DisplayMonitors.FirstOrDefault(m => m.IsVirtual);
@@ -389,14 +392,46 @@ public partial class MainWindow : Window
                 : "Virtual display active & streaming";
             BtnToggleDisplay.Content = "Turn off";
             BtnToggleDisplay.Style = (Style)FindResource("DangerButton");
+            BtnToggleDisplay.IsEnabled = true;
+        }
+        else if (deviceState == VirtualDisplayDeviceState.Disabled)
+        {
+            TxtDisplayState.Text = "Driver disabled";
+            TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "Bad");
+            TxtDisplayDetail.Text = VirtualDisplayManager.IsElevated()
+                ? "Click to enable the driver and start streaming"
+                : "Restart the app as administrator to enable the driver";
+            BtnToggleDisplay.Content = VirtualDisplayManager.IsElevated() ? "Turn on" : "Restart as admin";
+            BtnToggleDisplay.Style = (Style)FindResource("PrimaryButton");
+            BtnToggleDisplay.IsEnabled = true;
+        }
+        else if (deviceState == VirtualDisplayDeviceState.Problem)
+        {
+            TxtDisplayState.Text = "Driver error";
+            TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "Bad");
+            TxtDisplayDetail.Text = "The virtual display driver reported an error — try Restart driver";
+            BtnToggleDisplay.Content = "Restart driver";
+            BtnToggleDisplay.Style = (Style)FindResource("PrimaryButton");
+            BtnToggleDisplay.IsEnabled = true;
+        }
+        else if (deviceState == VirtualDisplayDeviceState.Missing)
+        {
+            TxtDisplayState.Text = "Driver not installed";
+            TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "Bad");
+            TxtDisplayDetail.Text = "The virtual display driver was not found — reinstall OpenWinSidecar";
+            BtnToggleDisplay.Content = "Turn on";
+            BtnToggleDisplay.Style = (Style)FindResource("PrimaryButton");
+            BtnToggleDisplay.IsEnabled = false;
         }
         else
         {
+            // Normal off — driver is Started (or Unknown) but not streaming
             TxtDisplayState.Text = "Off";
             TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
             TxtDisplayDetail.Text = "The virtual display is offline — click Turn on to stream";
             BtnToggleDisplay.Content = "Turn on";
             BtnToggleDisplay.Style = (Style)FindResource("PrimaryButton");
+            BtnToggleDisplay.IsEnabled = true;
         }
 
         // Connect URL & network endpoint selection (prioritize Wi-Fi and USB)
@@ -592,8 +627,23 @@ public partial class MainWindow : Window
 
     private async void BtnToggleDisplay_Click(object sender, RoutedEventArgs e)
     {
-        // Explicitly check current button content & operational state
-        bool shouldTurnOn = BtnToggleDisplay.Content?.ToString() == "Turn on"
+        var btnLabel = BtnToggleDisplay.Content?.ToString() ?? "";
+
+        // The display card repurposes the toggle button for driver triage when the
+        // VDD is disabled, in error, or needs elevation. Route those labels to the
+        // correct action instead of the normal on/off toggle.
+        if (btnLabel == "Restart as admin")
+        {
+            BtnStartElevated_Click(sender, e);
+            return;
+        }
+        if (btnLabel == "Restart driver")
+        {
+            BtnRestartDriver_Click(sender, e);
+            return;
+        }
+
+        bool shouldTurnOn = btnLabel == "Turn on"
                             || !(_streamingHost.IsRunning || _manager.ProcessManager.IsProcessRunning)
                             || !_manager.IsVirtualDisplayActive;
 
