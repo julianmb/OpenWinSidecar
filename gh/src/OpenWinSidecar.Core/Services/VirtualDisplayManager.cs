@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
+using OpenWinSidecar.Core.Models;
 
 namespace OpenWinSidecar.Core.Services;
 
@@ -78,15 +80,31 @@ public class VirtualDisplayManager
         return Path.Combine(AppContext.BaseDirectory, relativePath);
     }
 
-    public static bool IsVirtualDisplayEnabled()
+    /// <summary>
+    /// True if the current process is running with administrator privileges.
+    /// Used to decide whether enabling a disabled VDD device node can be
+    /// attempted directly or needs an elevated restart.
+    /// </summary>
+    public static bool IsElevated() =>
+        new WindowsPrincipal(WindowsIdentity.GetCurrent())
+            .IsInRole(WindowsBuiltInRole.Administrator);
+
+    /// <summary>
+    /// Queries the PnP device node ROOT\DISPLAY\0000 and returns its state.
+    /// Unlike <see cref="IsVirtualDisplayEnabled"/>, this distinguishes
+    /// "disabled" (needs elevation to enable) from "missing" (needs reinstall)
+    /// from "problem" (needs driver restart) so the UI can tell the user
+    /// exactly what's wrong instead of a generic "Off".
+    /// </summary>
+    public static VirtualDisplayDeviceState GetVirtualDisplayDeviceState()
     {
         try
         {
+            // Fast path: if the VDD is attached to the desktop as a virtual
+            // monitor, it's Started regardless of what pnputil reports.
             var monitors = DisplayResolutionManager.GetAllMonitorsDetailed();
             if (monitors.Any(m => m.IsVirtual))
-            {
-                return true;
-            }
+                return VirtualDisplayDeviceState.Started;
         }
         catch { }
 
@@ -101,23 +119,51 @@ public class VirtualDisplayManager
                 CreateNoWindow = true
             };
             using var p = Process.Start(psi);
-            if (p != null)
-            {
-                string output = p.StandardOutput.ReadToEnd();
-                p.WaitForExit(2000);
-                if (output.Contains("Status:                     Disabled", StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-                if (output.Contains("Status:                     Started", StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-        }
-        catch { }
+            if (p == null) return VirtualDisplayDeviceState.Unknown;
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(2000);
 
-        return false;
+            // pnputil prints nothing for an unknown instance ID — device not installed.
+            if (string.IsNullOrWhiteSpace(output))
+                return VirtualDisplayDeviceState.Missing;
+
+            // Parse the "Status:" line robustly (trim-compare, not fixed-width).
+            // pnputil emits lines like "Status:                     Started" or
+            // "Status:                     Disabled" or "Status:                     Problem".
+            foreach (var line in output.Split('\n'))
+            {
+                var trimmed = line.Trim();
+                if (!trimmed.StartsWith("Status:", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var value = trimmed["Status:".Length..].Trim();
+                if (string.IsNullOrEmpty(value))
+                    continue;
+                if (value.Equals("Started", StringComparison.OrdinalIgnoreCase))
+                    return VirtualDisplayDeviceState.Started;
+                if (value.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
+                    return VirtualDisplayDeviceState.Disabled;
+                if (value.Equals("Problem", StringComparison.OrdinalIgnoreCase))
+                    return VirtualDisplayDeviceState.Problem;
+                // Any other status (e.g. "UnKnown") — treat as Problem.
+                return VirtualDisplayDeviceState.Problem;
+            }
+
+            // "Status:" line not found in output — device exists but pnputil
+            // format changed. Fall back to checking if the output mentions
+            // the instance ID at all.
+            if (output.Contains("ROOT\\DISPLAY\\0000", StringComparison.OrdinalIgnoreCase))
+                return VirtualDisplayDeviceState.Problem;
+            return VirtualDisplayDeviceState.Missing;
+        }
+        catch
+        {
+            return VirtualDisplayDeviceState.Unknown;
+        }
+    }
+
+    public static bool IsVirtualDisplayEnabled()
+    {
+        return GetVirtualDisplayDeviceState() == VirtualDisplayDeviceState.Started;
     }
 
     public static bool DisableVirtualDisplay()

@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenWinSidecar.Service.Capture;
 using OpenWinSidecar.Service.Protocol;
 
 namespace OpenWinSidecar.Service;
@@ -47,6 +48,10 @@ public sealed class StreamingServerHost : IDisposable
 
             _discoveryServer = new SidecarDiscoveryServer(port);
             _discoveryServer.Start();
+
+            // Start the background sweep that evicts stale clients (iPad asleep,
+            // Wi-Fi lost, process killed) so they don't linger in the client list.
+            ClientFrameSink.StartStaleSweep();
 
             _tcpServer = new SidecarTcpServer(port);
             _tcpServer.Start();

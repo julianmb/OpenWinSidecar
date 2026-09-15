@@ -19,6 +19,7 @@ public class SidecarManager
     public List<NetworkEndpointInfo> NetworkEndpoints { get; private set; } = new();
     public List<DisplayMonitorInfo> DisplayMonitors { get; private set; } = new();
     public bool IsVirtualDisplayActive { get; private set; } = false;
+    public VirtualDisplayDeviceState DeviceState { get; private set; } = VirtualDisplayDeviceState.Unknown;
 
     public event EventHandler? StateChanged;
 
@@ -33,7 +34,8 @@ public class SidecarManager
             DisplayMonitors = DisplayResolutionManager.GetAllMonitorsDetailed();
 
             bool streaming = IsStreamingActive != null ? IsStreamingActive() : ProcessManager.IsProcessRunning;
-            IsVirtualDisplayActive = streaming && VirtualDisplayManager.IsVirtualDisplayEnabled();
+            DeviceState = VirtualDisplayManager.GetVirtualDisplayDeviceState();
+            IsVirtualDisplayActive = streaming && DeviceState == VirtualDisplayDeviceState.Started;
         });
 
         StateChanged?.Invoke(this, EventArgs.Empty);

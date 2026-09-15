@@ -171,6 +171,37 @@ public class CaptureAndSinkTests
         h.Dispose();
     }
 
+    [Fact]
+    public void StaleSink_WithOldLastActivity_TriggersDisconnect()
+    {
+        using var h = new SinkHarness(remoteAddress: "192.168.1.99:1234");
+        bool requested = false;
+        h.Sink.SetDisconnectHandler(() => requested = true);
+
+        // Simulate a client that hasn't sent anything for 2 minutes.
+        h.Sink.SetLastActivityForTest(DateTime.UtcNow.AddMinutes(-2));
+
+        // Run the sweep manually (the Timer calls the same logic).
+        h.Sink.ForceStaleSweepForTest();
+
+        Assert.True(requested, "stale sink should have been disconnected");
+    }
+
+    [Fact]
+    public void ActiveSink_WithRecentLastActivity_NotDisconnected()
+    {
+        using var h = new SinkHarness(remoteAddress: "192.168.1.100:5678");
+        bool requested = false;
+        h.Sink.SetDisconnectHandler(() => requested = true);
+
+        // MarkActivity just now — sink is fresh.
+        h.Sink.MarkActivity();
+
+        h.Sink.ForceStaleSweepForTest();
+
+        Assert.False(requested, "active sink should not have been disconnected");
+    }
+
     // ------------------------------------------------------------------
     // Partial compose correctness
     // ------------------------------------------------------------------

@@ -89,6 +89,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
           Get-ChildItem installer/output
 
+      - name: Sign installer (optional)
+        if: ${{ env.SIGNING_CERT_THUMBPRINT != '' }}
+        shell: pwsh
+        env:
+          SIGNING_CERT_THUMBPRINT: ${{ secrets.SIGNING_CERT_THUMBPRINT }}
+        run: |
+          $exe = "installer/output/${{ steps.ver.outputs.asset }}"
+          $signtool = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe"
+          $st = Get-ChildItem $signtool | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $st) { throw "signtool.exe not found in Windows SDK" }
+          & $st.FullName sign /sha1 $env:SIGNING_CERT_THUMBPRINT `
+            /tr http://timestamp.digicert.com /td sha256 /fd sha256 `
+            $exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
+          Write-Host "Installer signed with cert thumbprint $env:SIGNING_CERT_THUMBPRINT"
+
       - name: Hash installer
         id: hash
         shell: pwsh

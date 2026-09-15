@@ -71,6 +71,51 @@ public sealed class ClientFrameSink : IDisposable
     private volatile string _remoteAddress = "";
     private int _lastFps, _lastKbps, _lastLatencyMs;
 
+    // Last time we heard from the client (read or stats message). A stale-client
+    // sweep timer evicts sinks with no activity for >60s so zombie connections
+    // (iPad asleep, Wi-Fi lost, process killed) don't linger in the client list
+    // with frozen telemetry.
+    private long _lastActivityTicks = DateTime.UtcNow.Ticks;
+    internal DateTime LastActivityUtc => new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
+    private static System.Threading.Timer? _staleSweep;
+    private static readonly TimeSpan StaleThreshold = TimeSpan.FromSeconds(60);
+
+    /// <summary>Updates the last-activity timestamp — call on every read / client message.</summary>
+    internal void MarkActivity() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+
+    /// <summary>Test hook: sets the last-activity timestamp to simulate a stale client.</summary>
+    internal void SetLastActivityForTest(DateTime utc) => Interlocked.Exchange(ref _lastActivityTicks, utc.Ticks);
+
+    /// <summary>
+    /// Starts the background sweep that evicts sinks with no client activity for
+    /// longer than <see cref="StaleThreshold"/>. Called once when the hub starts.
+    /// </summary>
+    internal static void StartStaleSweep()
+    {
+        _staleSweep ??= new System.Threading.Timer(_ => SweepStaleSinks(), null, 15000, 15000);
+    }
+
+    private static void SweepStaleSinks()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var kvp in ActiveSinks)
+        {
+            var sink = kvp.Key;
+            try
+            {
+                if (now - sink.LastActivityUtc > StaleThreshold)
+                {
+                    Console.WriteLine($"[Sink] {sink._remoteAddress} stale (last activity {(now - sink.LastActivityUtc).TotalSeconds:F0}s ago) — disconnecting");
+                    sink.RequestDisconnect();
+                }
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>Test hook: runs the stale sweep logic immediately.</summary>
+    internal void ForceStaleSweepForTest() => SweepStaleSinks();
+
     public string RemoteAddress { get => _remoteAddress; set => _remoteAddress = value; }
 
     private volatile Action? _disconnectHandler;
@@ -114,6 +159,7 @@ public sealed class ClientFrameSink : IDisposable
         _lastFps = fps;
         _lastKbps = kbps;
         _lastLatencyMs = latencyMs;
+        MarkActivity();
     }
 
     /// <summary>A point-in-time view of one connected client, for the Console.</summary>

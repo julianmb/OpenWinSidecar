@@ -4,6 +4,37 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-15 — VDD disabled-state detection + stale client cleanup + signing support
+
+### Fixed
+- **"Turn on" no longer silently fails when the VDD driver is disabled.** After a reboot,
+  the virtual display device (`ROOT\DISPLAY\0000`) can be left in `CM_PROB_DISABLED` state.
+  The dashboard used to show a generic "Off — click Turn on" with no explanation, and
+  clicking did nothing because `pnputil /enable-device` needs elevation. Now
+  `GetVirtualDisplayDeviceState()` distinguishes Disabled / Problem / Missing / Started, and
+  the display card shows the exact state: "Driver disabled — restart as administrator" (with
+  the button relabeled accordingly), "Driver error — try Restart driver", or "Driver not
+  installed — reinstall OpenWinSidecar". Verified: disabled the VDD via pnputil, dashboard
+  showed "Driver disabled" with the correct button; re-enabled, "Turn on" worked.
+- **Stale zombie clients no longer linger forever.** A client that disconnects ungracefully
+  (iPad asleep, Wi-Fi lost, process killed without a TCP FIN) used to stay in the "Connected
+  clients" list with frozen telemetry (e.g. 2525 ms latency, 6 fps — the number that prompted
+  this fix) until the next socket write finally failed. Two changes:
+  - The input reader loop now cancels the session token when it exits (on `bytesRead <= 0`),
+    so the consumer loop stops sending into a dead socket and the sink gets disposed.
+  - A 15-second sweep timer evicts any sink with no client activity for >60s via the existing
+    `RequestDisconnect()` path. TCP keepalive (15s time, 5s interval) is also now set on
+    accepted sockets so the OS detects dead peers faster.
+
+### Added
+- **Optional installer code signing.** The release workflow has a conditional "Sign installer"
+  step that runs when a `SIGNING_CERT_THUMBPRINT` secret is set — drop in a cert thumbprint
+  (OV, EV, or Azure Trusted Signing) and the installer is signed before hashing. Without the
+  secret the step is skipped and the SHA-256 hash in the release notes remains the verification
+  method. Signing options documented in `CONTRIBUTING.md`.
+
+---
+
 ## 2026-09-14 — Release pipeline: CI smoke test + automated winget-pkgs PR
 
 ### Added
