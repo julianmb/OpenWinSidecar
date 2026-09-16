@@ -48,10 +48,13 @@ dotnet run --project src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj
 
 ## 🚢 Release process (maintainers)
 
-The [Release workflow](.github/workflows/release.yml) automates everything after the tag;
-`installer/OpenWinSidecar.iss`'s `MyAppVersion` is the single version source.
+The [Release workflow](.github/workflows/release.yml) automates everything after the tag.
+The version lives in `src/OpenWinSidecar/OpenWinSidecar.csproj` (`<Version>`, which stamps
+the app assembly and the dashboard title) and in `installer/OpenWinSidecar.iss`
+(`MyAppVersion`, which drives the installer) — the `VersionConsistencyTests` fail the
+build if they drift apart.
 
-1. Bump `MyAppVersion` (e.g. `"0.1.1"`) and write the CHANGELOG section — its newest `##`
+1. Bump both versions (e.g. `"0.1.1"`) and write the CHANGELOG section — its newest `##`
    block becomes the release notes automatically.
 2. Verify locally: `dotnet test`, `node tests/viewer.runtime.test.cjs`, and one elevated
    install/uninstall cycle of a locally compiled installer.

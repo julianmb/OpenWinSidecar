@@ -1,5 +1,9 @@
 # Sync gh/ distribution mirror from the working tree.
 # (installer/stage, installer/output, bin/, obj/ are build artifacts and stay local.)
+#
+# Everything the published repo needs is mirrored here — including .github/workflows
+# (a stale mirror copy shipped a broken workflow once; that class of drift ends here).
+# The remaining manual step is tools/publish_gh.ps1, which commits and pushes gh/.
 
 $root = Split-Path -Parent $PSScriptRoot   # repo root (tools/ parent)
 
@@ -33,8 +37,11 @@ robocopy "$root\ios\OpenWinSidecarClient" "$root\gh\ios\OpenWinSidecarClient" /M
 Write-Output "Mirroring $root\installer (script only) -> $root\gh\installer ..."
 robocopy "$root\installer" "$root\gh\installer" OpenWinSidecar.iss /NFL /NDL /NJH /NJS /NP | Select-Object -Last 3
 
+Write-Output "Mirroring $root\.github -> $root\gh\.github (CI workflows must not drift) ..."
+robocopy "$root\.github" "$root\gh\.github" /MIR /NFL /NDL /NJH /NJS /NP | Select-Object -Last 5
+
 foreach ($f in @("CHANGELOG.md", "docs\future-work.md")) {
     Copy-Item (Join-Path $root $f) -Destination (Join-Path "$root\gh" $f) -Force
     Write-Output "Copied $f"
 }
-Write-Output "Mirror complete. Remember to commit both trees."
+Write-Output "Mirror complete. Publish with tools\publish_gh.ps1 (or remember to commit both trees)."

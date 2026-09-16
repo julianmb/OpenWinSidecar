@@ -1,8 +1,10 @@
 name: Release
 
 # Cutting a release:
-#   1. Write the CHANGELOG section and bump `MyAppVersion` in installer/OpenWinSidecar.iss
-#      (that define is the single version source — winget manifests are maintained here).
+#   1. Write the CHANGELOG section and bump the version in BOTH:
+#      - src/OpenWinSidecar/OpenWinSidecar.csproj (<Version> — app assembly + dashboard)
+#      - installer/OpenWinSidecar.iss (#define MyAppVersion — installer)
+#      (VersionConsistencyTests fail the build if they drift apart.)
 #   2. Test locally (dotnet test + viewer runtime test + an install/uninstall cycle).
 #   3. Commit, push, then tag:  git tag v0.1.2 && git push origin v0.1.2
 # This workflow builds the self-contained app, compiles the Inno installer, hashes it,

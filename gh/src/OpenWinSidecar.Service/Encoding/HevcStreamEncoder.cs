@@ -52,6 +52,13 @@ public sealed class HevcStreamEncoder : IDisposable
     /// <summary>Display name of the hardware encoder selected at startup (for the Console).</summary>
     public static string SelectedEncoderName => HevcEncoderProfiles.SelectedDisplayName ?? "JPEG (no hardware encoder)";
 
+    /// <summary>
+    /// True when a hardware encoder passed its probe (implying a working FFmpeg). The FFmpeg
+    /// banner hides itself when this is set — the encoder's actual outcome is authoritative
+    /// over a file-resolution lookup that can transiently miss.
+    /// </summary>
+    public static bool HardwareEncoderActive => HevcEncoderProfiles.HasSelectedProfile;
+
     /// <summary>Live count of running hardware encoder processes across all clients.</summary>
     public static int ActiveEncoderCount => _activeEncoders;
     private static int _activeEncoders;
@@ -130,14 +137,21 @@ public sealed class HevcStreamEncoder : IDisposable
             if (File.Exists(candidate)) return candidate;
         }
 
-        // 3. Scan the WinGet portable package tree (Gyan.FFmpeg via winget lands here)
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var wingetDir = Path.Combine(localAppData, "Microsoft", "WinGet", "Packages");
-        if (Directory.Exists(wingetDir))
+        // 3. Scan the WinGet portable package tree (Gyan.FFmpeg via winget lands here).
+        // AllDirectories throws on any subfolder the account can't read (the tree contains
+        // packages owned by other installs) — a transient ACL failure must read as
+        // "not found", not crash the banner check or the encoder init.
+        try
         {
-            var matches = Directory.GetFiles(wingetDir, "ffmpeg.exe", SearchOption.AllDirectories);
-            if (matches.Length > 0) return matches[0];
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var wingetDir = Path.Combine(localAppData, "Microsoft", "WinGet", "Packages");
+            if (Directory.Exists(wingetDir))
+            {
+                var matches = Directory.GetFiles(wingetDir, "ffmpeg.exe", SearchOption.AllDirectories);
+                if (matches.Length > 0) return matches[0];
+            }
         }
+        catch { }
 
         // 4. Nothing found anywhere we know to look. Say so once, with the fix, and make
         //    the miss visible to callers (Initialize aborts; the sink degrades to JPEG).
