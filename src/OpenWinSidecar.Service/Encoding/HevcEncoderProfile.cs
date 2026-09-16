@@ -107,6 +107,14 @@ internal static class HevcEncoderProfiles
     internal static string? SelectedDisplayName => _selected?.DisplayName;
 
     /// <summary>
+    /// True once a hardware encoder passed its probe — which by construction means a working
+    /// FFmpeg was found and used. The dashboard's FFmpeg-missing banner defers to this: if the
+    /// encoder is streaming HEVC, a null file-resolution result is a stale/failed lookup, not
+    /// a missing dependency, and the banner must not show.
+    /// </summary>
+    internal static bool HasSelectedProfile => _selected != null;
+
+    /// <summary>
     /// Detects the best working hardware HEVC encoder once per process by running a one-frame probe
     /// encode against each candidate in priority order. Returns null when none work, so the caller
     /// falls back to JPEG. Software encoding (libx265) is deliberately not offered: it cannot keep

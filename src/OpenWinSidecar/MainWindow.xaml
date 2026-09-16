@@ -258,7 +258,7 @@
                     <StackPanel VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="OpenWinSidecar" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
-                            <TextBlock Text="v0.1" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="6,0,0,0" VerticalAlignment="Bottom" Padding="0,0,0,1"/>
+                            <TextBlock x:Name="TxtVersion" Text="v0.1.1" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="6,0,0,0" VerticalAlignment="Bottom" Padding="0,0,0,1"/>
                         </StackPanel>
                         <TextBlock Text="Windows virtual displays, streamed to Apple devices" FontSize="10" Foreground="{StaticResource TextSecondary}"/>
                     </StackPanel>

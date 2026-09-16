@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Compile Swift Package App
+    name: Compile Swift Package App + refresh distributable zip
     runs-on: macos-14
     steps:
       - name: Check out repository
@@ -22,3 +22,20 @@ jobs:
         run: |
           cd ios/OpenWinSidecarClient
           swift build -v
+
+      # The server distributes OpenWinSidecar.swiftpm.zip (see SidecarTcpServer.ServeIosAppZipAsync).
+      # Rebuild it from the single canonical source on every green build so it can never go stale.
+      - name: Refresh distributable Swift Playgrounds zip
+        run: |
+          rm -rf /tmp/swiftpm-dist
+          mkdir -p /tmp/swiftpm-dist
+          cp -R ios/OpenWinSidecarClient /tmp/swiftpm-dist/OpenWinSidecar.swiftpm
+          rm -rf /tmp/swiftpm-dist/OpenWinSidecar.swiftpm/.build
+          rm -f ios/OpenWinSidecar.swiftpm.zip
+          (cd /tmp/swiftpm-dist && zip -qr "$GITHUB_WORKSPACE/ios/OpenWinSidecar.swiftpm.zip" OpenWinSidecar.swiftpm -x '*/.*')
+
+      - name: Commit refreshed zip
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Refresh ios/OpenWinSidecar.swiftpm.zip from source"
+          file_pattern: ios/OpenWinSidecar.swiftpm.zip

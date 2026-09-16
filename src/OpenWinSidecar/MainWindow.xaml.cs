@@ -92,6 +92,10 @@ public partial class MainWindow : Window
 
         Loaded += async (s, e) =>
         {
+            // Title version comes from the assembly (csproj <Version>); the XAML default is
+            // only a design-time placeholder.
+            TxtVersion.Text = "v" + (typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0");
+
             PopulateResolutionPresets();
             LoadSettingsIntoUi();
             // Immediate-apply dropdowns (no Apply buttons): attach after the initial population
@@ -377,6 +381,16 @@ public partial class MainWindow : Window
         TxtServiceState.Foreground = isRunning ? (SolidColorBrush)FindResource("Good") : (SolidColorBrush)FindResource("Bad");
 
         TxtServiceState.Text = isRunning ? "Running" : "Stopped";
+
+        // FFmpeg banner self-healing: the startup check can transiently miss FFmpeg (PATH /
+        // where.exe flakiness) and show the banner while HEVC is actually streaming. Once a
+        // hardware encoder is active the dependency is proven — collapse the banner here
+        // rather than contradicting the session card's "Intel QuickSync" + HEVC client rows.
+        if (FfmpegBanner.Visibility == Visibility.Visible
+            && OpenWinSidecar.Service.Encoders.HevcStreamEncoder.HardwareEncoderActive)
+        {
+            FfmpegBanner.Visibility = Visibility.Collapsed;
+        }
 
         // Hero card: the display state distinguishes "driver disabled / error / missing"
         // from the normal "off, ready to turn on" so the user knows *why* Turn on isn't
@@ -998,6 +1012,15 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task CheckFfmpegBannerAsync()
     {
+        // The encoder's actual outcome is authoritative: if a hardware encoder passed its
+        // probe, FFmpeg is by definition working and the banner must not show — even when
+        // this file-resolution lookup transiently misses (PATH/where.exe flakiness).
+        if (OpenWinSidecar.Service.Encoders.HevcStreamEncoder.HardwareEncoderActive)
+        {
+            FfmpegBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
         var ffmpeg = await Task.Run(
             () => OpenWinSidecar.Service.Encoders.HevcStreamEncoder.FindFfmpegExecutable());
         if (ffmpeg != null)

@@ -54,6 +54,27 @@ You see two mouse cursors moving on top of each other on your iPad/client browse
 
 ---
 
+## 4b. Dashboard says "Driver disabled" / "Driver error" / "Driver not installed"
+
+The display card on the dashboard reports the *exact* driver state, so "Turn on"
+failing silently is a thing of the past. What each state means:
+
+| Dashboard shows | Meaning | Fix |
+|---|---|---|
+| **Driver disabled** — "Restart the app as administrator to enable the driver" | The device node `ROOT\DISPLAY\0000` is in `CM_PROB_DISABLED` state (typically left behind after a reboot or by a manual disable). Re-enabling requires elevation. | Click **Restart as admin** on the card (or the button under Advanced / maintenance). If the app is already elevated, the button says **Turn on** and enables the driver directly. |
+| **Driver error** — "The virtual display driver reported an error" | The device node reported a problem code (e.g. code 43 / a failed start). | Click **Restart driver** on the card (runs `devcon restart` + `pnputil /restart-device`). If it persists, reboot the machine — the IddCx driver sometimes needs a cold start. |
+| **Driver not installed** — "The virtual display driver was not found" | No `ROOT\DISPLAY\0000` device node exists at all — the driver was uninstalled or never installed. | Reinstall OpenWinSidecar (the installer stages the driver package and creates the device node). |
+
+You can always check the raw state yourself:
+
+```powershell
+Get-PnpDevice -InstanceId 'ROOT\DISPLAY\0000' | Select-Object Status, Problem
+```
+
+`CM_PROB_DISABLED` (code 22) = the "Driver disabled" card; `CM_PROB_NONE` + `OK` = healthy.
+
+---
+
 ## 5. Virtual Display Driver Reset
 
 If the virtual monitor stops responding:

@@ -4,6 +4,39 @@ Every change to this project is documented here: **what** was changed, **why**, 
 
 ---
 
+## 2026-09-16 — Banner/version/mirror fixes: five smaller improvements
+
+### Fixed
+- **The FFmpeg banner no longer contradicts the session card.** The dashboard could show
+  "FFmpeg not found — falls back to JPEG" while the same screen showed Intel QuickSync HEVC
+  actively streaming. The banner's file-resolution lookup (where.exe → WinGet Links →
+  Packages scan) can transiently miss even when FFmpeg works. The encoder's actual outcome
+  is now authoritative: if a hardware encoder passed its probe, the banner never shows, and
+  the 3-second UI refresh collapses it once HEVC starts. The WinGet Packages scan is also
+  wrapped in try/catch — an `UnauthorizedAccessException` on the recursive scan (the tree
+  contains folders owned by other installs) used to crash the resolution instead of reading
+  as "not found".
+- **The dashboard version is no longer stale.** The title showed a hardcoded "v0.1" while
+  the installer shipped 0.1.1. The version now comes from the assembly (`<Version>` in
+  `OpenWinSidecar.csproj`), and a new `VersionConsistencyTests` fails the build if the csproj
+  version and the installer's `MyAppVersion` drift apart. Release docs updated: bump both.
+- **The gh/ mirror can no longer ship stale CI workflows.** The mirror script now mirrors
+  `.github/` into `gh/` — the hand-copied release.yml (and a stale ios-ci.yml found during
+  this pass) were exactly this failure mode. A new `tools/publish_gh.ps1` also encodes the
+  clone → overlay → commit → push dance for the published repo, so publishing is one command
+  instead of a reverse-engineered ritual.
+
+### Added
+- **pnputil parser unit tests.** The new VDD device-state classification (Started / Disabled /
+  Problem / Missing) is a pure function (`ParsePnputilDeviceStatus`) pinned by tests against
+  captured real pnputil output shapes — the fixed-width string matching it replaced was
+  exactly the kind of code that breaks silently when Windows reformats its tooling.
+- **Troubleshooting entry for the dashboard's driver states.** `docs/troubleshooting-and-faq.md`
+  section 4b explains what "Driver disabled" / "Driver error" / "Driver not installed" mean,
+  the fix for each, and the `Get-PnpDevice` command to check the raw state.
+
+---
+
 ## 2026-09-15 — VDD disabled-state detection + stale client cleanup + signing support
 
 ### Fixed
