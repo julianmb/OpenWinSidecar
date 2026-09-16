@@ -10,7 +10,11 @@
 #   powershell tools/publish_gh.ps1 -Message "My change"     # explicit message
 #
 # Steps before running: edit sources, run tools/sync_gh_mirror.ps1, commit the dev repo.
-# This script does NOT touch the dev repo — it only publishes gh/ as it currently stands.
+# This script does NOT touch the dev repo - it only publishes gh/ as it currently stands.
+#
+# NOTE: keep this file ASCII-only (no em-dashes in string literals). Windows PowerShell 5.1
+# reads BOM-less UTF-8 as ANSI, and an em-dash's bytes decode to a smart quote, which
+# terminates the string and breaks parsing.
 
 param(
     [string]$Message = "Publish gh/ mirror"
@@ -22,7 +26,7 @@ $gh = Join-Path $root "gh"
 $tmp = Join-Path $root "owi_publish_tmp"
 
 if (-not (Test-Path (Join-Path $gh "OpenWinSidecar.slnx"))) {
-    throw "gh/ mirror looks wrong (no OpenWinSidecar.slnx) — run tools/sync_gh_mirror.ps1 first"
+    throw "gh/ mirror looks wrong (no OpenWinSidecar.slnx) - run tools/sync_gh_mirror.ps1 first"
 }
 
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
@@ -43,7 +47,7 @@ try {
 
     git diff --cached --quiet
     if ($LASTEXITCODE -eq 0) {
-        Write-Output "Published repo already up to date — nothing to push."
+        Write-Output "Published repo already up to date - nothing to push."
     } else {
         git commit -m $Message
         if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
