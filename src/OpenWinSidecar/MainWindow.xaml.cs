@@ -536,32 +536,35 @@ public partial class MainWindow : Window
     private void UpdateAppleUsbHint()
     {
         var state = OpenWinSidecar.Core.Services.AppleUsbSupport.GetDriverState();
+        
+        // Collapse the new banner and reset the hint text to default
+        UsbDriverBanner.Visibility = Visibility.Collapsed;
+        TxtUsbHint.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
+        TxtUsbHint.Text = "Scan QR or open URL. USB + Personal Hotspot = 0ms.";
+
         if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.NoDevice)
         {
-            PnlAppleUsb.Visibility = Visibility.Collapsed;
-            return;
+            return; // Use default hint text
         }
 
-        PnlAppleUsb.Visibility = Visibility.Visible;
         if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.Ready)
         {
             var usbIp = _manager.NetworkEndpoints
                 .Where(e => e.Category.Contains("USB", StringComparison.Ordinal))
                 .Select(e => e.PrimaryIpAddress)
                 .FirstOrDefault();
-            EllipseAppleUsb.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Good");
-            TxtAppleUsb.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
-            TxtAppleUsb.Text = usbIp != null
-                ? $"iPad over USB ready — open http://{usbIp}:8080 on the iPad"
+            
+            // Highlight the hint as good and show the direct URL
+            TxtUsbHint.SetResourceReference(TextBlock.ForegroundProperty, "Good");
+            TxtUsbHint.Text = usbIp != null
+                ? $"iPad over USB ready — open http://{usbIp}:8080 on the iPad (0ms latency)"
                 : "iPad over USB adapter present (no address yet — replug the cable)";
-            BtnInstallAppleDriver.Visibility = Visibility.Collapsed;
         }
-        else
+        else // DriverMissing or other problem state
         {
-            EllipseAppleUsb.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Bad");
-            TxtAppleUsb.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
-            TxtAppleUsb.Text = "iPad detected over USB, but the network driver is missing — install Apple Devices to stream over the cable.";
-            BtnInstallAppleDriver.Visibility = Visibility.Visible;
+            // Show the large banner and use generic hint text
+            UsbDriverBanner.Visibility = Visibility.Visible;
+            TxtUsbHint.Text = "Scan QR or open URL. Wired streaming requires the Apple Devices USB driver.";
         }
     }
 
@@ -1150,6 +1153,13 @@ public partial class MainWindow : Window
     /// </summary>
     private void AppendLog(string msg)
     {
+        // Filter out noisy HEVC and Hub diagnostics by default.
+        if (msg.StartsWith("[HEVC] parser stalls:") ||
+            msg.StartsWith("[HEVC] first-VCL seen with no pending push stamp") ||
+            msg.Contains("capture=") || msg.Contains("compose=") || msg.Contains("sinks="))
+        {
+            return;
+        }
         var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
         _logBuffer.Add(line);
         if (_logBuffer.Count > MaxLogBufferLines)
