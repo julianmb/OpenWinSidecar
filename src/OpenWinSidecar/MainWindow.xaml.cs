@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -97,11 +98,21 @@ public partial class MainWindow : Window
             TxtVersion.Text = "v" + (typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0");
 
             PopulateResolutionPresets();
+            PopulateStreamDisplayCombo();
             LoadSettingsIntoUi();
+            LoadStreamSettingsIntoUi();
+            ApplyStreamSettingsFromUi();
             // Immediate-apply dropdowns (no Apply buttons): attach after the initial population
             // so the programmatic SelectedIndex doesn't trigger a display change.
             CmbResolution.SelectionChanged += CmbResolution_SelectionChanged;
             CmbDpi.SelectionChanged += CmbDpi_SelectionChanged;
+            // Stream controls - attach handlers after loading settings
+            CmbStreamDisplay.SelectionChanged += StreamSettingChanged;
+            CmbStreamFps.SelectionChanged += StreamSettingChanged;
+            CmbStreamQuality.SelectionChanged += StreamSettingChanged;
+            CmbStreamCodec.SelectionChanged += StreamSettingChanged;
+            CmbStreamColorDepth.SelectionChanged += StreamSettingChanged;
+            CmbStreamZoom.SelectionChanged += StreamSettingChanged;
             await RefreshDataAsync();
             _timer.Start();
             await CheckFfmpegBannerAsync();
@@ -205,7 +216,7 @@ public partial class MainWindow : Window
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Open", null, (s, e) => ShowAndRestoreWindow());
-        menu.Items.Add("Open web viewer", null, (s, e) => OpenWebViewer());
+        menu.Items.Add("Preview on this PC", null, (s, e) => OpenWebViewer());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Turn iPad display on", null, (s, e) => ToggleDisplay(on: true));
         menu.Items.Add("Turn iPad display off", null, (s, e) => ToggleDisplay(on: false));
@@ -358,6 +369,16 @@ public partial class MainWindow : Window
         {
             await _manager.RefreshStateAsync();
             UpdateUi();
+            // Monitors appear/change asynchronously (virtual display enable); keep the
+            // Stream Controls display list in sync without disturbing the chosen device.
+            var currentSelection = (CmbStreamDisplay.SelectedItem as ComboBoxItem)?.Tag as string;
+            PopulateStreamDisplayCombo();
+            if (currentSelection != null && CmbStreamDisplay.Items.Cast<ComboBoxItem>()
+                    .Any(i => (string?)i.Tag == currentSelection))
+            {
+                CmbStreamDisplay.SelectedItem = CmbStreamDisplay.Items
+                    .Cast<ComboBoxItem>().First(i => (string?)i.Tag == currentSelection);
+            }
         }
         catch (Exception ex)
         {
@@ -473,6 +494,7 @@ public partial class MainWindow : Window
         CmbNetworkEndpoints.SelectionChanged += CmbNetworkEndpoints_SelectionChanged;
 
         UpdateQrCode(TxtConnectUrl.Text);
+        UpdateAppleUsbHint();
 
         // Clients — live from the streaming engine (the legacy registry entries are unrelated).
         var clients = _streamingHost.IsRunning
@@ -505,6 +527,50 @@ public partial class MainWindow : Window
     }
 
     private readonly Queue<(double fps, double lat)> _sparklineHistory = new();
+
+    /// <summary>
+    /// Connection card hint for iPad-over-USB: green when the cable can carry the stream
+    /// (adapter present), an install offer when an iPad is attached but the Apple driver
+    /// is missing, and hidden when no Apple device is plugged in.
+    /// </summary>
+    private void UpdateAppleUsbHint()
+    {
+        var state = OpenWinSidecar.Core.Services.AppleUsbSupport.GetDriverState();
+        if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.NoDevice)
+        {
+            PnlAppleUsb.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        PnlAppleUsb.Visibility = Visibility.Visible;
+        if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.Ready)
+        {
+            var usbIp = _manager.NetworkEndpoints
+                .Where(e => e.Category.Contains("USB", StringComparison.Ordinal))
+                .Select(e => e.PrimaryIpAddress)
+                .FirstOrDefault();
+            EllipseAppleUsb.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Good");
+            TxtAppleUsb.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
+            TxtAppleUsb.Text = usbIp != null
+                ? $"iPad over USB ready — open http://{usbIp}:8080 on the iPad"
+                : "iPad over USB adapter present (no address yet — replug the cable)";
+            BtnInstallAppleDriver.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            EllipseAppleUsb.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Bad");
+            TxtAppleUsb.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
+            TxtAppleUsb.Text = "iPad detected over USB, but the network driver is missing — install Apple Devices to stream over the cable.";
+            BtnInstallAppleDriver.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void BtnInstallAppleDriver_Click(object sender, RoutedEventArgs e)
+    {
+        OpenWinSidecar.Core.Services.AppleUsbSupport.OpenStorePage();
+        SetStatus("Opening the Microsoft Store — install the free Apple Devices app, then replug the iPad.");
+    }
+
 
     private void UpdateSparkline(double currentFps, double currentLat)
     {
@@ -747,6 +813,11 @@ public partial class MainWindow : Window
     {
         var monitors = _manager.DisplayMonitors;
         if (monitors.Count == 0) return null;
+        if (CmbStreamDisplay.SelectedItem is ComboBoxItem selected && selected.Tag is string deviceName)
+        {
+            var match = monitors.FirstOrDefault(m => m.DeviceName == deviceName);
+            if (match != null) return match;
+        }
         return monitors.FirstOrDefault(m => m.IsVirtual) ?? monitors.FirstOrDefault(m => m.IsPrimary) ?? monitors[0];
     }
 
@@ -793,6 +864,7 @@ public partial class MainWindow : Window
     private async void ApplyResolution(DisplayMonitorInfo monitor, int width, int height, int refreshRate)
     {
         bool ok = DisplayResolutionManager.SetDisplayResolution(monitor.DeviceName, width, height, refreshRate);
+        if (ok) ApplyStreamSettingsFromUi();
         if (ok)
         {
             SetStatus($"Resolution changed to {width}×{height} @ {refreshRate} Hz on {monitor.DeviceName}.");
@@ -1125,6 +1197,121 @@ public partial class MainWindow : Window
     }
 
     // ----- Preferences -----
+
+    private void PopulateStreamDisplayCombo()
+    {
+        CmbStreamDisplay.Items.Clear();
+        var monitors = _manager.DisplayMonitors;
+        for (int i = 0; i < monitors.Count; i++)
+        {
+            var m = monitors[i];
+            var label = m.IsPrimary
+                ? $"Main Screen ({m.Width}x{m.Height})"
+                : m.IsVirtual
+                    ? $"Virtual iPad Screen ({m.Width}x{m.Height})"
+                    : $"Display {i + 1} ({m.Width}x{m.Height})";
+            CmbStreamDisplay.Items.Add(new ComboBoxItem { Content = label, Tag = m.DeviceName });
+        }
+        if (CmbStreamDisplay.Items.Count > 0)
+            CmbStreamDisplay.SelectedItem = CmbStreamDisplay.Items.Cast<ComboBoxItem>().FirstOrDefault(i =>
+                monitors.Any(m => m.IsVirtual && m.DeviceName == (string)i.Tag)) ?? CmbStreamDisplay.Items[0];
+    }
+
+    private void LoadStreamSettingsIntoUi()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\OpenWinSidecar\Stream");
+            if (key != null)
+            {
+                if (key.GetValue("DeviceName") is string device)
+                    CmbStreamDisplay.SelectedItem = CmbStreamDisplay.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == device)
+                        ?? CmbStreamDisplay.SelectedItem;
+                if (key.GetValue("Zoom") is string zoom)
+                    CmbStreamZoom.SelectedItem = CmbStreamZoom.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == zoom)
+                        ?? CmbStreamZoom.SelectedItem;
+
+                // FPS
+                var fpsVal = key.GetValue("Fps");
+                if (fpsVal is int fps)
+                {
+                    var fpsItem = CmbStreamFps.Items.Cast<ComboBoxItem>().FirstOrDefault(i => i.Tag is string s && s == fps.ToString());
+                    if (fpsItem != null) CmbStreamFps.SelectedItem = fpsItem;
+                }
+
+                // Quality
+                var qualityVal = key.GetValue("Quality");
+                if (qualityVal is int quality)
+                {
+                    var qualityItem = CmbStreamQuality.Items.Cast<ComboBoxItem>().FirstOrDefault(i => i.Tag is string s && s == quality.ToString());
+                    if (qualityItem != null) CmbStreamQuality.SelectedItem = qualityItem;
+                }
+
+                // Codec
+                var codecVal = key.GetValue("Codec") as string;
+                if (!string.IsNullOrEmpty(codecVal))
+                {
+                    var codecItem = CmbStreamCodec.Items.Cast<ComboBoxItem>().FirstOrDefault(i => i.Tag is string s && s.Equals(codecVal, StringComparison.OrdinalIgnoreCase));
+                    if (codecItem != null) CmbStreamCodec.SelectedItem = codecItem;
+                }
+
+                // Color depth
+                var depthVal = key.GetValue("ColorDepth");
+                if (depthVal is int depth)
+                {
+                    var depthItem = CmbStreamColorDepth.Items.Cast<ComboBoxItem>().FirstOrDefault(i => i.Tag is string s && s == depth.ToString());
+                    if (depthItem != null) CmbStreamColorDepth.SelectedItem = depthItem;
+                }
+            }
+        }
+        catch { }
+    }
+
+    private void SaveStreamSettingsToRegistry()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\OpenWinSidecar\Stream");
+            if (key == null) return;
+
+            if (CmbStreamDisplay.SelectedItem is ComboBoxItem display) key.SetValue("DeviceName", (string)display.Tag);
+            if (CmbStreamZoom.SelectedItem is ComboBoxItem zoom) key.SetValue("Zoom", (string)zoom.Tag);
+
+            if (CmbStreamFps.SelectedItem is ComboBoxItem fpsItem && fpsItem.Tag is string fpsStr && int.TryParse(fpsStr, out var fps))
+                key.SetValue("Fps", fps, Microsoft.Win32.RegistryValueKind.DWord);
+
+            if (CmbStreamQuality.SelectedItem is ComboBoxItem qualityItem && qualityItem.Tag is string qualityStr && int.TryParse(qualityStr, out var quality))
+                key.SetValue("Quality", quality, Microsoft.Win32.RegistryValueKind.DWord);
+
+            if (CmbStreamCodec.SelectedItem is ComboBoxItem codecItem && codecItem.Tag is string codec)
+                key.SetValue("Codec", codec, Microsoft.Win32.RegistryValueKind.String);
+
+            if (CmbStreamColorDepth.SelectedItem is ComboBoxItem depthItem && depthItem.Tag is string depthStr && int.TryParse(depthStr, out var depth))
+                key.SetValue("ColorDepth", depth, Microsoft.Win32.RegistryValueKind.DWord);
+        }
+        catch { }
+    }
+
+    private void ApplyStreamSettingsFromUi()
+    {
+        string Value(System.Windows.Controls.ComboBox box, string fallback) => (box.SelectedItem as ComboBoxItem)?.Tag as string ?? fallback;
+        _streamingHost.SetStreamSettings(new HostStreamSettings
+        {
+            DeviceName = (CmbStreamDisplay.SelectedItem as ComboBoxItem)?.Tag as string,
+            Fps = int.Parse(Value(CmbStreamFps, "60")),
+            Quality = int.Parse(Value(CmbStreamQuality, "80")),
+            Codec = Value(CmbStreamCodec, "hevc") == "hevc" ? OpenWinSidecar.Service.Protocol.StreamCodec.HEVC : OpenWinSidecar.Service.Protocol.StreamCodec.IntraTurbo,
+            ColorDepth = int.Parse(Value(CmbStreamColorDepth, "8")),
+            Zoom = double.Parse(Value(CmbStreamZoom, "1.0"), System.Globalization.CultureInfo.InvariantCulture)
+        });
+    }
+
+    private void StreamSettingChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ApplyStreamSettingsFromUi();
+        SaveStreamSettingsToRegistry();
+        SetStatus("Stream settings applied. Display changes reconnect viewers.");
+    }
 
     private void LoadSettingsIntoUi()
     {

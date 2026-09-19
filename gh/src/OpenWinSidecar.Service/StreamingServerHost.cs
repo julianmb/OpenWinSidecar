@@ -12,6 +12,7 @@ public sealed class StreamingServerHost : IDisposable
     private SidecarDiscoveryServer? _discoveryServer;
     private SidecarTcpServer? _tcpServer;
     private readonly object _lock = new();
+    private HostStreamSettings _settings = new();
 
     public bool IsRunning { get; private set; }
     public int ActivePort { get; private set; } = 28252;
@@ -53,7 +54,7 @@ public sealed class StreamingServerHost : IDisposable
             // Wi-Fi lost, process killed) so they don't linger in the client list.
             ClientFrameSink.StartStaleSweep();
 
-            _tcpServer = new SidecarTcpServer(port);
+            _tcpServer = new SidecarTcpServer(port, _settings);
             _tcpServer.Start();
 
             IsRunning = true;
@@ -81,6 +82,19 @@ public sealed class StreamingServerHost : IDisposable
             IsRunning = false;
             OnLog?.Invoke("[Streaming Engine] In-process server stopped.");
             OnRunningStateChanged?.Invoke(false);
+        }
+    }
+
+    public void SetStreamSettings(HostStreamSettings settings)
+    {
+        if (settings.Fps is not (30 or 60) || settings.Quality is < 10 or > 95 ||
+            settings.ColorDepth is not (8 or 10) || settings.Codec is not (StreamCodec.HEVC or StreamCodec.IntraTurbo) ||
+            !double.IsFinite(settings.Zoom) || settings.Zoom is < 1 or > 3)
+            throw new ArgumentOutOfRangeException(nameof(settings));
+        lock (_lock)
+        {
+            _settings = settings;
+            _tcpServer?.ApplyStreamSettings(settings);
         }
     }
 

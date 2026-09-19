@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -36,8 +37,12 @@ public class SidecarTcpServer : IDisposable
     private CancellationTokenSource? _cts;
     private readonly List<TcpClient> _activeClients = new();
 
-    public SidecarTcpServer(int port = 28252)
+    private readonly object _settingsLock = new();
+    private HostStreamSettings _settings;
+
+    public SidecarTcpServer(int port = 28252, HostStreamSettings? settings = null)
     {
+        _settings = settings ?? new HostStreamSettings();
         _port = port;
         _ports = new[] { port, 80, 8080 };
     }
@@ -118,7 +123,7 @@ public class SidecarTcpServer : IDisposable
 
                 if (path == "/" || path.StartsWith("/?"))
                 {
-                    await ServeHtmlViewerPageAsync(stream, token);
+                    await ServeHtmlViewerPageAsync(stream, (client.Client.RemoteEndPoint as IPEndPoint)?.Address, token);
                 }
                 else if (path == "/app" || path == "/app/" || path.StartsWith("/app?") || path.StartsWith("/app/"))
                 {
@@ -213,28 +218,8 @@ public class SidecarTcpServer : IDisposable
         if (keyLine == null) return;
         var key = keyLine.Substring(18).Trim();
 
-        // The viewer announces its preferred codec in the WebSocket URL query (?codec=hevc).
-        // Knowing it before the first frame removes the one-frame JPEG startup flash that
-        // otherwise happened while the `codec:hevc` text message was still in flight.
-        var requestedCodec = StreamCodec.IntraTurbo;
-        try
-        {
-            var requestLine = request.Split("\r\n")[0];
-            var q = requestLine.IndexOf('?');
-            if (q > 0)
-            {
-                var end = requestLine.IndexOf(' ', q);
-                var query = end > q ? requestLine[(q + 1)..end] : requestLine[(q + 1)..];
-                foreach (var kv in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var eq = kv.IndexOf('=');
-                    if (eq <= 0 || !kv[..eq].Equals("codec", StringComparison.OrdinalIgnoreCase)) continue;
-                    var v = Uri.UnescapeDataString(kv[(eq + 1)..]).ToLowerInvariant();
-                    if (v is "hevc" or "h265") requestedCodec = StreamCodec.HEVC;
-                }
-            }
-        }
-        catch { }
+        // The desktop app owns the codec setting; a device without HEVC still sends
+        // codec:intra before its first frame, so no per-session codec query exists.
 
         // Browsers send Origin on upgrades; a foreign origin must never drive this PC.
         if (!IsOriginAllowed(request))
@@ -311,6 +296,10 @@ public class SidecarTcpServer : IDisposable
             }
         }
 
+        var hostDevice = _settings.DeviceName;
+        var hostIndex = Array.FindIndex(screens, s => string.Equals(s.DeviceName, hostDevice, StringComparison.OrdinalIgnoreCase));
+        if (hostIndex >= 0) { selectedDisplay = hostIndex; initialScreen = screens[hostIndex]; }
+
         var (originX, originY, physW, physH, hz) = CursorInterop.GetPhysicalScreenBounds(initialScreen.DeviceName);
 
         // Per-session cancellation. A Console kick (or any forced disconnect) cancels this token
@@ -325,15 +314,11 @@ public class SidecarTcpServer : IDisposable
             try { sessionCts.Cancel(); } catch { }
             try { client.Close(); } catch { }
         });
-        sink.Codec = requestedCodec;
-        sink.TargetWidth = physW > 0 ? physW : 2360;
-        sink.TargetHeight = physH > 0 ? physH : 1640;
-        // A persisted virtual-monitor mode is not the client's refresh-rate preference.
-        // In particular, a previous benchmark at 120 Hz must not change the default stream.
-        sink.TargetFramerate = 60;
-        if (virtualMon != null)
+        lock (_settingsLock)
         {
-            WindowsDpiService.SetMonitorDpiPercent(selectedDisplay, 175);
+            _settings.Apply(sink);
+            sink.TargetWidth = physW > 0 ? physW : 2360;
+            sink.TargetHeight = physH > 0 ? physH : 1640;
         }
         _hub.EnsureProducer(sink.DeviceName);
         // Start the HEVC encoder now so its ~1 s spawn + init overlaps the client handshake
@@ -349,13 +334,15 @@ public class SidecarTcpServer : IDisposable
         void HandleClientMessage(string text)
         {
             if (string.IsNullOrEmpty(text)) return;
+            if (IsHostSettingCommand(text)) return;
             {
                         if (text.StartsWith("codec:"))
                         {
                             var cStr = text.Substring(6).ToLowerInvariant();
                             // Only HEVC is genuinely encoded; every other selection receives JPEG
                             // intra frames, so the packet label must never claim h264/av1/hevc
-                            sink.Codec = (cStr == "hevc" || cStr == "h265") ? StreamCodec.HEVC : StreamCodec.IntraTurbo;
+                            sink.HevcSupported = cStr is "hevc" or "h265";
+                            sink.Codec = sink.HevcSupported ? _settings.Codec : StreamCodec.IntraTurbo;
                             Console.WriteLine($"[WebSocket] Client requested codec: {sink.Codec}");
                         }
                         else if (text.StartsWith("decerr:"))
@@ -384,16 +371,7 @@ public class SidecarTcpServer : IDisposable
                             var statsJson = text.Substring(6);
 
                             // Keep the Console's live clients view current (fps/bitrate/latency).
-                            try
-                            {
-                                using var doc = System.Text.Json.JsonDocument.Parse(statsJson);
-                                var root = doc.RootElement;
-                                int fps = root.TryGetProperty("fps", out var f) && f.TryGetInt32(out var fv) ? fv : 0;
-                                int kbps = root.TryGetProperty("kbps", out var k) && k.TryGetInt32(out var kv) ? kv : 0;
-                                int lat = root.TryGetProperty("latencyMs", out var l) && l.TryGetInt32(out var lv) ? lv : 0;
-                                sink.UpdateClientStats(fps, kbps, lat);
-                            }
-                            catch { }
+                            TryUpdateClientStats(sink, statsJson);
 
                             // Log at most once per 5s per client.
                             var statsNow = DateTime.UtcNow;
@@ -429,6 +407,10 @@ public class SidecarTcpServer : IDisposable
                         {
                             if (long.TryParse(text.Substring(8), out var q)) sink.Quality = (int)Math.Clamp(q, 10, 95);
                         }
+                        else if (text.StartsWith("fps:"))
+                        {
+                            TrySetStreamFramerate(sink, text);
+                        }
                         else if (text.StartsWith("mode:extend"))
                         {
                             VirtualDisplayManager.EnableExtendMode();
@@ -448,7 +430,7 @@ public class SidecarTcpServer : IDisposable
 
                                 sink.TargetWidth = w;
                                 sink.TargetHeight = h;
-                                if (requestedHz > 0) sink.TargetFramerate = requestedHz;
+                                // Monitor refresh is independent of the per-client stream FPS.
                                 Console.WriteLine($"[Resolution] Target resolution set: {w}x{h}{(requestedHz > 0 ? $" @ {requestedHz}Hz" : "")}");
 
                                 // Aspect-match the virtual display to the client's screen so the
@@ -456,7 +438,6 @@ public class SidecarTcpServer : IDisposable
                                 var applied = DisplayResolutionManager.MatchVirtualDisplayToClient(w, h, requestedHz);
                                 if (applied != null)
                                 {
-                                    sink.TargetFramerate = applied.RefreshRate;
                                     Console.WriteLine($"[Resolution] Virtual display mode: {applied.Width}x{applied.Height} @ {applied.RefreshRate}Hz");
                                 }
                             }
@@ -483,7 +464,8 @@ public class SidecarTcpServer : IDisposable
                             // the switch seamless, and a failed switch auto-reverts client-side.
                             if (int.TryParse(text.Substring(6), out var depthBits))
                             {
-                                sink.ColorDepth = depthBits == 10 ? 10 : 8;
+                                sink.Main10Supported = depthBits == 10;
+                                sink.ColorDepth = sink.Main10Supported ? _settings.ColorDepth : 8;
                                 Console.WriteLine($"[Color] Target color depth set: {sink.ColorDepth}-bit");
                             }
                         }
@@ -582,6 +564,38 @@ public class SidecarTcpServer : IDisposable
         {
             sink.Dispose();
         }
+    }
+
+    // Only explicit supported stream rates are accepted; never change the monitor mode here.
+    internal static bool TrySetStreamFramerate(ClientFrameSink sink, string command)
+    {
+        int fps = command switch { "fps:30" => 30, "fps:60" => 60, _ => 0 };
+        if (fps == 0) return false;
+        sink.TargetFramerate = fps;
+        return true;
+    }
+
+    /// <summary>Accepts legacy stats and nullable viewer telemetry without retaining old samples.</summary>
+    internal static bool TryUpdateClientStats(ClientFrameSink sink, string json, DateTime? nowUtc = null)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            int? ReadInt(string name) => root.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)
+                    ? number : null;
+            bool? visible = root.TryGetProperty("visible", out var v)
+                && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
+            bool hasFrameAge = root.TryGetProperty("frameAgeMs", out var a);
+            double? frameAgeMs = hasFrameAge && a.ValueKind == JsonValueKind.Number
+                && a.TryGetDouble(out var age) && double.IsFinite(age) && age >= 0 ? age : null;
+            sink.UpdateClientStats(ReadInt("fps") ?? 0, ReadInt("kbps") ?? 0, ReadInt("latencyMs"),
+                visible, frameAgeMs, hasFrameAge, nowUtc);
+            return true;
+        }
+        catch (JsonException) { return false; }
     }
 
     // ------------------------------------------------------------------
@@ -1089,7 +1103,7 @@ public class SidecarTcpServer : IDisposable
     /// <summary>
     /// Loads the embedded WebCodecs viewer page (<c>wwwroot/index.html</c>) once per process.
     /// The page lives as a real HTML/CSS/JS file so it can be edited, linted and diffed; only the
-    /// display &lt;option&gt; list is substituted per request.
+    /// display &lt;option&gt; list and local-preview flag are substituted per request.
     /// </summary>
     private static string GetViewerTemplate()
     {
@@ -1107,7 +1121,35 @@ public class SidecarTcpServer : IDisposable
         return _viewerTemplate;
     }
 
-    private static async Task ServeHtmlViewerPageAsync(NetworkStream stream, CancellationToken token)
+    // An accidental-preview UX hint, not an authorization boundary. Compare the socket peer
+    // with assigned addresses, not Host/DNS or forwarded headers, and publish only a boolean.
+    internal static bool RequiresLocalPreview(IPAddress? peerAddress, IEnumerable<IPAddress>? hostAddresses = null)
+    {
+        if (peerAddress == null) return false;
+        static IPAddress Normalize(IPAddress address) => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        var peer = Normalize(peerAddress);
+        if (IPAddress.IsLoopback(peer)) return true;
+
+        try
+        {
+            hostAddresses ??= NetworkInterface.GetAllNetworkInterfaces()
+                .SelectMany(nic => nic.GetIPProperties().UnicastAddresses)
+                .Select(address => address.Address);
+            return hostAddresses.Any(address => Normalize(address).Equals(peer));
+        }
+        catch (NetworkInformationException)
+        {
+            // Keep serving when adapter enumeration fails; the viewer also checks loopback.
+            return false;
+        }
+    }
+
+    internal static string InjectLocalPreviewRequired(string html, bool required) =>
+        html.Replace("/*LOCAL_PREVIEW_REQUIRED*/false",
+            required ? "/*LOCAL_PREVIEW_REQUIRED*/true" : "/*LOCAL_PREVIEW_REQUIRED*/false",
+            StringComparison.Ordinal);
+
+    private static async Task ServeHtmlViewerPageAsync(NetworkStream stream, IPAddress? peerAddress, CancellationToken token)
     {
         var screens = Screen.AllScreens;
         var virtualMon = DisplayResolutionManager.GetAllMonitorsDetailed().FirstOrDefault(m => m.IsVirtual);
@@ -1125,9 +1167,10 @@ public class SidecarTcpServer : IDisposable
         }
 
         var html = GetViewerTemplate().Replace("<!--DISPLAY_OPTIONS-->", displayOptions.ToString());
+        html = InjectLocalPreviewRequired(html, RequiresLocalPreview(peerAddress));
 
         var htmlBytes = Encoding.UTF8.GetBytes(html);
-        var header = $"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {htmlBytes.Length}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n";
+        var header = $"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {htmlBytes.Length}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n";
         await stream.WriteAsync(Encoding.UTF8.GetBytes(header), token);
         await stream.WriteAsync(htmlBytes, token);
         await stream.FlushAsync(token);
@@ -1182,6 +1225,31 @@ public class SidecarTcpServer : IDisposable
                 client.Dispose();
             }
             _activeClients.Clear();
+        }
+    }
+
+    /// <summary>Broadcasts a text message to all connected clients.</summary>
+    internal static bool IsHostSettingCommand(string text) =>
+        new[] { "display:", "fps:", "quality:", "set_res:", "dpi:", "zoom:", "mode:" }
+            .Any(prefix => text.StartsWith(prefix, StringComparison.Ordinal));
+
+    public void ApplyStreamSettings(HostStreamSettings settings)
+    {
+        lock (_settingsLock)
+        {
+            _settings = settings;
+            foreach (var sink in _hub.GetAllSinks())
+            {
+                if (settings.DeviceName != null && !string.Equals(settings.DeviceName, sink.DeviceName, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Reconnect drains the old display session and rebuilds input mapping together.
+                    sink.RequestDisconnect();
+                    continue;
+                }
+                settings.Apply(sink);
+                var (_, _, width, height, _) = CursorInterop.GetPhysicalScreenBounds(sink.DeviceName);
+                if (width > 0 && height > 0) { sink.TargetWidth = width; sink.TargetHeight = height; }
+            }
         }
     }
 

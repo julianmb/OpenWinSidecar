@@ -47,6 +47,62 @@ public sealed class HevcStreamEncoder : IDisposable
     private System.Threading.Timer? _auFlushTimer;
     private int _nalCount, _vclCount, _auCount, _packetCount;
 
+    // ---- parser stall instrumentation (monotonic, per access unit) ----
+    // pushStartUs of the raw frame currently being awaited as encoded output, stamped by
+    // the sink via the generation FIFO before PushRawFrame returns.
+    internal long PendingPushStartUs;
+    // When the first VCL NAL of the current (unflushed) AU arrived. The gap to the flush
+    // moment is pure parser hold — the AU's end is only knowable when the next start code
+    // or the flush timer proves it.
+    private long _auFirstVclUs;
+    // Push-start → first-VCL-seen: the true ffmpeg internal latency (encode + pipe out).
+    private long _pushToFirstVclSumUs, _pushToFirstVclMaxUs;
+    private long _pushToFirstVclCount;
+    // First-VCL → AU flushed: pure parser hold cost.
+    private long _parserHoldSumUs, _parserHoldMaxUs;
+    private long _parserHoldCount;
+
+    internal static long NowUs()
+    {
+        var t = System.Diagnostics.Stopwatch.GetTimestamp();
+        return t * 1_000_000 / System.Diagnostics.Stopwatch.Frequency;
+    }
+
+    /// <summary>One-line parser stall aggregates for the last window; null when no AUs flowed.</summary>
+    internal string? FlushParserDiagnostics()
+    {
+        long pushCount = Interlocked.Exchange(ref _pushToFirstVclCount, 0);
+        long holdCount = Interlocked.Exchange(ref _parserHoldCount, 0);
+        long pushSum = Interlocked.Exchange(ref _pushToFirstVclSumUs, 0);
+        long pushMax = Interlocked.Exchange(ref _pushToFirstVclMaxUs, 0);
+        long holdSum = Interlocked.Exchange(ref _parserHoldSumUs, 0);
+        long holdMax = Interlocked.Exchange(ref _parserHoldMaxUs, 0);
+        if (pushCount == 0 && holdCount == 0) return null;
+        return $"[HEVC] parser stalls: ffmpeg(push->firstVCL) avg={(pushCount > 0 ? pushSum / pushCount / 1000.0 : 0):F1}ms" +
+               $" max={pushMax / 1000.0:F1}ms n={pushCount};" +
+               $" parserHold(firstVCL->flushed) avg={(holdCount > 0 ? holdSum / holdCount / 1000.0 : 0):F1}ms" +
+               $" max={holdMax / 1000.0:F1}ms n={holdCount}";
+    }
+
+    private void RecordPushToFirstVcl()
+    {
+        long pushStart = Interlocked.Read(ref PendingPushStartUs);
+        if (pushStart <= 0)
+        {
+            if (Interlocked.CompareExchange(ref _missingStampLogged, 0, 0) == 0)
+                Console.WriteLine("[HEVC] first-VCL seen with no pending push stamp — association will not record");
+            return;
+        }
+        long delta = NowUs() - pushStart;
+        if (delta < 0 || delta > 10_000_000) return; // implausible (>10s) — clock garbage
+        Interlocked.Increment(ref _pushToFirstVclCount);
+        Interlocked.Add(ref _pushToFirstVclSumUs, delta);
+        InterlockedExtensions.Max(ref _pushToFirstVclMaxUs, delta);
+        Interlocked.Exchange(ref PendingPushStartUs, 0); // consume: one push → one first-VCL
+    }
+
+    private int _missingStampLogged;
+
     public bool IsActive => _isInitialized && _ffmpegProc != null && !_ffmpegProc.HasExited;
 
     /// <summary>Display name of the hardware encoder selected at startup (for the Console).</summary>
@@ -285,6 +341,8 @@ public sealed class HevcStreamEncoder : IDisposable
                 // "Decoder failure" and the session permanently degrades to JPEG). The final
                 // pre-silence frame is simply held until its terminator arrives with the next
                 // data; showing it one frame late is invisible, a dead decoder is not.
+                // 8ms backstop: mid-burst AUs flush on the next AU's first slice; the LAST AU of
+                // a burst has no such terminator and would otherwise sit ~1 frame (33ms) here.
                 _auFlushTimer = new System.Threading.Timer(
                     _ =>
                     {
@@ -293,7 +351,7 @@ public sealed class HevcStreamEncoder : IDisposable
                             FlushAccessUnit();
                         }
                     },
-                    null, TimeSpan.FromMilliseconds(33), TimeSpan.FromMilliseconds(33));
+                    null, TimeSpan.FromMilliseconds(8), TimeSpan.FromMilliseconds(8));
 
                 _isInitialized = true;
                 _counted = true;
@@ -454,7 +512,7 @@ public sealed class HevcStreamEncoder : IDisposable
         else if (type == 39 || type == 40) { _pendingNonVcl.Add(LengthPrefixed(nal)); } // SEI
         else if (type <= 31)
         {
-            // VCL NAL ÔÇö first_slice_segment_in_pic_flag is the top bit of the byte after the 2-byte NAL header
+            // VCL NAL — first_slice_segment_in_pic_flag is the top bit of the byte after the 2-byte NAL header
             bool firstSlice = nal.Length > 2 && (nal[2] & 0x80) != 0;
             if (firstSlice && _auNals.Count > 0) FlushAccessUnit();
 
@@ -462,6 +520,14 @@ public sealed class HevcStreamEncoder : IDisposable
             {
                 _firstVclLogged = true;
                 Console.WriteLine($"[HEVC] first VCL NAL: type={type} len={nal.Length} bytes={BitConverter.ToString(nal, 0, Math.Min(8, nal.Length))}");
+            }
+
+            if (firstSlice)
+            {
+                // New AU starts here. Measure the ffmpeg internal latency (push of the raw
+                // frame → its first encoded bytes) and stamp the hold clock for this AU.
+                if (_auFirstVclUs == 0) RecordPushToFirstVcl();
+                _auFirstVclUs = NowUs();
             }
 
             _vclCount++;
@@ -496,6 +562,20 @@ public sealed class HevcStreamEncoder : IDisposable
         _auNals.Clear();
         bool key = _auHasKey;
         _auHasKey = false;
+
+        // Parser hold telemetry: how long the finished AU waited (for the next start code
+        // or the flush timer) after its last byte existed.
+        if (_auFirstVclUs > 0)
+        {
+            long hold = NowUs() - _auFirstVclUs;
+            if (hold >= 0 && hold < 10_000_000)
+            {
+                Interlocked.Increment(ref _parserHoldCount);
+                Interlocked.Add(ref _parserHoldSumUs, hold);
+                InterlockedExtensions.Max(ref _parserHoldMaxUs, hold);
+            }
+            _auFirstVclUs = 0;
+        }
 
         _auCount++;
         _packetCount++;

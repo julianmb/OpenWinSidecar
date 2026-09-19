@@ -148,6 +148,17 @@ public sealed class FrameBroadcastHub : IDisposable
         }
     }
 
+    /// <summary>Returns a snapshot of all currently connected client sinks.</summary>
+    public List<ClientFrameSink> GetAllSinks()
+    {
+        var list = new List<ClientFrameSink>();
+        lock (_sync)
+        {
+            list.AddRange(_sinks);
+        }
+        return list;
+    }
+
     public void Dispose()
     {
         lock (_sync)

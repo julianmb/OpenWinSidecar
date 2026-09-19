@@ -340,9 +340,20 @@
             background: #3B82F6; border: none; border-radius: 12px;
             padding: 12px; font-size: 14px; font-weight: 700; color: #fff;
         }
+        #local-preview-overlay { position: fixed; inset: 0; z-index: 20000;
+            display: flex; align-items: center; justify-content: center; background: #101018; }
+        #local-preview-overlay[hidden] { display: none; }
     </style>
 </head>
 <body>
+    <div id='local-preview-overlay' hidden role='dialog' aria-modal='true' aria-labelledby='local-preview-title'>
+        <div class='auth-card'>
+            <h1 id='local-preview-title' class='auth-title'>Preview on this PC</h1>
+            <p>This preview can create a mirror loop if it is on the display being streamed.</p>
+            <p>Move this window to a physical monitor that is not being captured before starting. To use your iPad, open the viewer there instead.</p>
+            <button class='auth-btn' onclick='startLocalPreview()'>Start local preview</button>
+        </div>
+    </div>
     <div id='container'>
         <div id='top-pill' onclick='toggleSettingsModal()'>
             <span class='dot'></span>
@@ -373,23 +384,6 @@
                     </div>
 
                     <div class='setting-group'>
-                        <label>Display</label>
-                        <select id='display-select' onchange='changeDisplay(this.value)'>
-                            <!--DISPLAY_OPTIONS-->
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
-                        <label>Quality</label>
-                        <select id='quality-select' onchange='changeQuality(this.value)'>
-                            <option value='50'>50% — fastest</option>
-                            <option value='65'>65% — balanced</option>
-                            <option value='80' selected>80% — high detail</option>
-                            <option value='90'>90% — ultra crisp</option>
-                        </select>
-                    </div>
-
-                    <div class='setting-group'>
                         <label>Cursor</label>
                         <select id='cursor-select' onchange='changeCursorMode(this.value)'>
                             <option value='host' selected>Streamed Windows cursor</option>
@@ -408,95 +402,6 @@
 
                     <details class='advanced'>
                         <summary>More options</summary>
-                        <div class='setting-group'>
-                            <label>Video codec</label>
-                            <select id='codec-select' onchange='changeCodec(this.value)'>
-                                <option value='hevc' selected>HEVC / H.265 (hardware)</option>
-                                <option value='intra'>Intra JPEG (fallback)</option>
-                            </select>
-                        </div>
-
-                        <div class='setting-group'>
-                            <label>Color depth</label>
-                            <select id='depth-select' onchange='changeDepth(this.value)'>
-                                <option value='8' selected>8-bit — compatible</option>
-                                <option value='10'>10-bit — smoother gradients</option>
-                            </select>
-                        </div>
-
-                        <div class='setting-group'>
-                            <label>Resolution</label>
-                            <select id='res-select' onchange='changeResolutionPreset(this.value)'>
-                                <optgroup label='iPad 10.9-inch / 11-inch Air / 10th-11th Gen'>
-                                    <option value='2360x1640' selected>2360 x 1640 — native (recommended)</option>
-                                    <option value='2360x1640@120'>2360 x 1640 @ 120Hz ProMotion</option>
-                                    <option value='1180x820'>1180 x 820 — @2x logical</option>
-                                    <option value='1180x820@120'>1180 x 820 @ 120Hz ProMotion</option>
-                                </optgroup>
-                                <optgroup label='iPad Pro 11-inch (M4)'>
-                                    <option value='2420x1668'>2420 x 1668 — native</option>
-                                    <option value='2420x1668@120'>2420 x 1668 @ 120Hz ProMotion</option>
-                                    <option value='1210x834'>1210 x 834 — @2x logical</option>
-                                    <option value='1210x834@120'>1210 x 834 @ 120Hz ProMotion</option>
-                                </optgroup>
-                                <optgroup label='iPad Pro 11-inch (1st–4th Gen)'>
-                                    <option value='2388x1668'>2388 x 1668 — native</option>
-                                    <option value='2388x1668@120'>2388 x 1668 @ 120Hz ProMotion</option>
-                                    <option value='1194x834'>1194 x 834 — @2x logical</option>
-                                    <option value='1194x834@120'>1194 x 834 @ 120Hz ProMotion</option>
-                                </optgroup>
-                                <optgroup label='iPad Pro 13-inch (M4)'>
-                                    <option value='2752x2064'>2752 x 2064 — native</option>
-                                    <option value='2752x2064@120'>2752 x 2064 @ 120Hz ProMotion</option>
-                                    <option value='1376x1032'>1376 x 1032 — @2x logical</option>
-                                </optgroup>
-                                <optgroup label='iPad Pro 12.9-inch / Air 13-inch'>
-                                    <option value='2732x2048'>2732 x 2048 — native</option>
-                                    <option value='2732x2048@120'>2732 x 2048 @ 120Hz ProMotion</option>
-                                    <option value='1366x1024'>1366 x 1024 — @2x logical</option>
-                                </optgroup>
-                                <optgroup label='iPad 10.2-inch (7th–9th Gen)'>
-                                    <option value='2160x1620'>2160 x 1620 — native</option>
-                                    <option value='1080x810'>1080 x 810 — @2x logical</option>
-                                </optgroup>
-                                <optgroup label='iPad 9.7-inch & iPad mini Retina'>
-                                    <option value='2048x1536'>2048 x 1536 — native</option>
-                                    <option value='1024x768'>1024 x 768 — @2x logical</option>
-                                </optgroup>
-                                <optgroup label='iPad mini 8.3-inch (6th Gen & A17 Pro)'>
-                                    <option value='2266x1488'>2266 x 1488 — native</option>
-                                    <option value='1133x744'>1133 x 744 — @2x logical</option>
-                                </optgroup>
-                                <optgroup label='PC Standard'>
-                                    <option value='1920x1080'>1920 x 1080 — Full HD</option>
-                                    <option value='2560x1440'>2560 x 1440 — QHD</option>
-                                </optgroup>
-                                <option value='auto'>Auto-detect screen size</option>
-                            </select>
-                        </div>
-
-                        <div class='setting-group'>
-                            <label>Windows display scale</label>
-                            <select id='dpi-select' onchange='changeDpi(this.value)'>
-                                <option value='100'>100% — native</option>
-                                <option value='125'>125%</option>
-                                <option value='150'>150%</option>
-                                <option value='175' selected>175% — recommended</option>
-                                <option value='200'>200%</option>
-                                <option value='225'>225%</option>
-                            </select>
-                        </div>
-
-                        <div class='setting-group'>
-                            <label>UI magnification</label>
-                            <select id='zoom-select' onchange='changeZoom(this.value)'>
-                                <option value='1.0' selected>1.0x — full desktop</option>
-                                <option value='1.25'>1.25x</option>
-                                <option value='1.5'>1.5x</option>
-                                <option value='1.75'>1.75x</option>
-                                <option value='2.0'>2.0x</option>
-                            </select>
-                        </div>
 
                         <div class='setting-group'>
                             <label>Aspect</label>
@@ -515,6 +420,10 @@
                             </div>
                         </div>
                     </details>
+
+                    <!-- Hidden selects for server-initiated settings -->
+                    <div style='display:none;'>
+                    </div>
                 </div>
 
                 <div class='modal-footer'>
@@ -710,13 +619,13 @@
 
         // VSync-paced presentation. Decoded frames are staged and painted on
         // requestAnimationFrame (the display's vsync) — never drawn directly on decode. Network /
-        // encoder jitter then cannot judder the picture: the loop always paints the newest staged
+        // encoder jitter can still cause replacement: the loop always paints the newest staged
         // frame, and simply paints nothing on a vsync with no new frame (the canvas keeps the
         // last image). Ownership of a staged frame moves to the loop, which closes it after paint.
         let pendingDrawable = null;
         let hasPendingDrawable = false;
 
-        function submitDrawable(source, width, height, timestampUs) {
+        function submitDrawable(source, width, height, timestampUs, receivedAt) {
             if (pendingDrawable && pendingDrawable.source && pendingDrawable.source.close) {
                 // The previous decoded frame was never painted — a newer frame superseded it
                 // between two vsyncs. Counting this is the only way to see the true cost of
@@ -724,7 +633,7 @@
                 replacedRenderCount++;
                 try { pendingDrawable.source.close(); } catch (e) {}
             }
-            pendingDrawable = { source: source, width: width, height: height, timestampUs: timestampUs, stagedAt: performance.now() };
+            pendingDrawable = { source: source, width: width, height: height, timestampUs: timestampUs, stagedAt: performance.now(), receivedAt: receivedAt ?? null };
             hasPendingDrawable = true;
         }
 
@@ -739,15 +648,19 @@
                     presentationWaitSum += paintStart - d.stagedAt;
                     paintDrawable(d);
                     paintTimeSum += performance.now() - paintStart;
+                    if (d.receivedAt != null) {
+                        receiptToPaintSum += performance.now() - d.receivedAt;
+                        receiptToPaintSamples++;
+                    }
                     if (d.timestampUs !== null && d.timestampUs !== undefined && clockOffsetMs !== null) {
                         // offset = serverMs - clientMs, so client clock = server clock - offset
                         const lat = performance.now() - (d.timestampUs / 1000 - clockOffsetMs);
                         if (lat >= 0 && lat < 3000) {
                             latencySum += lat; latencySamples++;
+                            lastLatencyAt = performance.now();
                             if (lat > latencyMax) latencyMax = lat;
                         }
-                    }
-                    recordFps();
+                    }                    recordFps();
                 } catch (e) {
                     console.warn('[Render Error]', e);
                 } finally {
@@ -762,47 +675,28 @@
         function onVideoFrameDecoded(videoFrame) {
             decodedWindowFrames++;
             try {
-                // Latest-frame-wins: if more frames are already queued behind this one the
-                // decoder is in a burst — close this one undrawn and keep only the newest frame
-                // of the burst (the render loop paints it on the next vsync).
-                // Dropping here (at decode output) keeps glass-to-glass latency ultra-tight (<60ms)
-                // without corrupting the HEVC delta reference chain.
-                if (videoDecoder && videoDecoder.decodeQueueSize > 1) {
-                    if (videoDecoder.decodeQueueSize > dropWindow.decodePeak)
-                        dropWindow.decodePeak = videoDecoder.decodeQueueSize;
-                    droppedRenderCount++;
-                    registerHevcDrop();
-                    videoFrame.close();
-                    return;
-                }
-                submitDrawable(videoFrame, videoFrame.displayWidth, videoFrame.displayHeight, Number(videoFrame.timestamp));
+                const timestamp = Number(videoFrame.timestamp);
+                const receivedAt = decodeReceipts.get(timestamp);
+                decodeReceipts.delete(timestamp);
+                recordDecodeTiming(receivedAt);
+                submitDrawable(videoFrame, videoFrame.displayWidth, videoFrame.displayHeight, timestamp, receivedAt);
             } catch (e) {
                 console.warn('[Render Error]', e);
                 try { videoFrame.close(); } catch (e2) {}
             }
         }
 
-        // Sustained-backlog recovery: >30 dropped renders inside a 5s sliding window means
-        // the stream is persistently outrunning the decoder/renderer — ask the server for a
-        // fresh IDR (cheap resync) at most once per window.
-        function registerHevcDrop() {
-            const now = performance.now();
-            if (now - dropWindow.start > 5000) {
-                dropWindow.start = now;
-                dropWindow.drops = 0;
-                dropWindow.decodePeak = 0;
+        function recoverHevcDecoder() {
+            clearPendingDrawable();
+            if (videoDecoder && videoDecoder.state !== 'closed') videoDecoder.close();
+            videoDecoder = null;
+            needsHevcKeyframe = true;
+            if (!initHevcDecoder()) {
+                changeCodec('intra');
+                return false;
             }
-            dropWindow.drops++;
-            // Render drops are by design (latest-wins) and are NOT corruption. Only request a
-            // fresh IDR when the decoder itself is genuinely backlogged (~25 frames ≈ 0.4s).
-            // Previously this fired on >30 drops/5s, which — combined with the server tearing
-            // down and respawning the encoder on every request — produced an IDR→restart→drop
-            // feedback loop that froze the stream every few seconds.
-            if (dropWindow.decodePeak > 24 && now - dropWindow.lastForceIdr > 10000) {
-                dropWindow.lastForceIdr = now;
-                console.warn('[Backpressure] decoder backlog peak=' + dropWindow.decodePeak + ' — requesting fresh IDR');
-                if (ws && ws.readyState === WebSocket.OPEN) ws.send('forceidr');
-            }
+            requestHevcKeyframe();
+            return true;
         }
 
         function renderDirect(source, width, height) {
@@ -816,11 +710,9 @@
         const fpsLabel = document.getElementById('fps');
         const latLabel = document.getElementById('lat');
         
-        const resSelect = document.getElementById('res-select');
-        const qualitySelect = document.getElementById('quality-select');
-        const codecSelect = document.getElementById('codec-select');
-        const depthSelect = document.getElementById('depth-select');
 
+        let activeCodec = 'hevc';
+        let activeDepth = 8;
         let ws;
         let frameCount = 0;
         let lastFpsUpdate = performance.now();
@@ -836,7 +728,15 @@
         let droppedRenderCount = 0;   // HEVC frames closed undrawn (bursts)
         let decodeQueuePeak = 0;      // max decoder queue depth this stats window
         let replacedRenderCount = 0;  // staged-but-unpainted frames replaced by a newer one this window
-        let jpegSeq = 0;              // monotonic JPEG delivery order
+        // Maps frame timestamp -> performance.now() at packet receipt for receipt-to-paint timing.
+        // Cleared wholesale when a stream/decoder generation changes; stale ids never resurface
+        // because HEVC timestamps are monotonic within an encoder generation.
+        const decodeReceipts = new Map();
+        const MAX_RECEIPT_ENTRIES = 256;
+        let receiptToDecodeSum = 0, receiptToDecodeSamples = 0;
+        let receiptToPaintSum = 0, receiptToPaintSamples = 0;
+        let jpegDecoding = false;
+        let pendingJpeg = null;
         let jpegDrops = 0;            // stale JPEG bitmaps discarded
         let hevcChunksReceived = 0;
         let bytesReceived = 0;
@@ -846,7 +746,97 @@
         let receivedWindowFrames = 0, decodedWindowFrames = 0, rafTicks = 0;
         let paintTimeSum = 0, presentationWaitSum = 0;
         let decodeErrors = 0;
-        const dropWindow = { start: performance.now(), drops: 0, decodePeak: 0, lastForceIdr: 0 };
+        const MAX_DECODE_QUEUE = 8;
+        const TELEMETRY_STALE_MS = 10000;
+        let lastPaintAt = null;
+        let lastLatencyAt = null;
+        let reconnectTimer = null;
+        const BACKGROUND_GRACE_MS = 3000;
+        let backgroundTimer = null;
+        let hiddenSince = null;
+        const localPreviewRequired = /*LOCAL_PREVIEW_REQUIRED*/false ||
+            /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i.test(location.hostname || '');
+        let localPreviewApproved = !localPreviewRequired;
+
+        function startLocalPreview() {
+            localPreviewApproved = true;
+            document.getElementById('local-preview-overlay').hidden = true;
+            if (!ws) connectWs();
+        }
+
+        function backgroundGraceActive() {
+            return document.hidden && hiddenSince !== null &&
+                performance.now() - hiddenSince < BACKGROUND_GRACE_MS;
+        }
+
+        function handleVisibilityChange() {
+            clearTimeout(backgroundTimer);
+            backgroundTimer = null;
+            if (document.hidden) {
+                hiddenSince = performance.now();
+                clearPendingDrawable();
+                backgroundTimer = setTimeout(() => {
+                    if (document.hidden) suspendStream();
+                }, BACKGROUND_GRACE_MS);
+                updateTelemetryStatus();
+            } else {
+                const graceExpired = hiddenSince !== null &&
+                    performance.now() - hiddenSince >= BACKGROUND_GRACE_MS;
+                hiddenSince = null;
+                if (graceExpired && ws) suspendStream();
+                if (!ws) connectWs();
+                else {
+                    resetTelemetry();
+                    sendSync();
+                    requestWakeLock();
+                }
+            }
+        }
+        let decoderGeneration = 0;
+        let streamGeneration = 0;
+
+        function recordDecodeTiming(receivedAt) {
+            if (receivedAt === null || receivedAt === undefined) return;
+            receiptToDecodeSum += performance.now() - receivedAt;
+            receiptToDecodeSamples++;
+        }
+
+        function clearPendingDrawable() {
+            if (pendingDrawable && pendingDrawable.source.close) pendingDrawable.source.close();
+            pendingDrawable = null;
+            hasPendingDrawable = false;
+        }
+
+        function resetTelemetry() {
+            receiptToDecodeSum = receiptToDecodeSamples = 0;
+            receiptToPaintSum = receiptToPaintSamples = 0;
+            decodeReceipts.clear();
+            lastPaintAt = lastLatencyAt = null;
+            latencySum = latencySamples = latencyMax = 0;
+            latencyAvg = null;
+            frameCount = statsWindowFrames = statsWindowBytes = 0;
+            receivedWindowFrames = decodedWindowFrames = rafTicks = 0;
+            paintTimeSum = presentationWaitSum = 0;
+            decodeErrors = decodeQueuePeak = replacedRenderCount = 0;
+            lastFpsUpdate = lastStatsWindow = performance.now();
+            if (latLabel) latLabel.textContent = '';
+        }
+
+        function updateTelemetryStatus() {
+            const now = performance.now();
+            if (!localPreviewApproved) fpsLabel.textContent = 'Preview not started';
+            else if (document.hidden) fpsLabel.textContent = backgroundGraceActive() ? 'Tab hidden' : 'Paused — tab hidden';
+            else if (!ws || ws.readyState !== WebSocket.OPEN) fpsLabel.textContent = '⟳ reconnecting';
+            else if (lastPaintAt === null) fpsLabel.textContent = 'Waiting for frames';
+            else if (now - lastPaintAt >= TELEMETRY_STALE_MS) {
+                fpsLabel.textContent = 'No recent frames · ' + Math.floor((now - lastPaintAt) / 1000) + 's ago';
+            }
+            if (document.hidden || !ws || ws.readyState !== WebSocket.OPEN ||
+                lastLatencyAt === null || now - lastLatencyAt >= TELEMETRY_STALE_MS) {
+                if (latLabel) latLabel.textContent = '';
+            }
+        }
+        setInterval(updateTelemetryStatus, 1000);
 
         // Glass-to-glass latency estimation. The server answers `sync` with its monotonic µs
         // clock; from the RTT we derive the clock offset, then measure each rendered frame as
@@ -928,7 +918,7 @@
         async function pickDefaultCodec() {
             const canHevc = await detectHevcSupport();
             const want = canHevc ? 'hevc' : 'intra';
-            if (codecSelect) codecSelect.value = want;
+            activeCodec = want;
             return want;
         }
 
@@ -995,6 +985,7 @@
             frameCount++;
             statsWindowFrames++;
             const now = performance.now();
+            lastPaintAt = now;
             if (now - lastFpsUpdate >= 1000) {
                 fpsLabel.innerText = Math.round((frameCount * 1000) / (now - lastFpsUpdate)) + ' FPS';
                 frameCount = 0;
@@ -1008,10 +999,11 @@
             const now = performance.now();
             const elapsed = now - lastStatsWindow;
             if (elapsed <= 0) return;
-            latencyAvg = latencySamples > 0 ? latencySum / latencySamples : latencyAvg;
+            latencyAvg = latencySamples > 0 ? latencySum / latencySamples : null;
             const stats5s = {
-                viewerVersion: '2026-09-11-perf-recovery',
+                viewerVersion: '2026-09-17-desktop-controls',
                 visible: document.visibilityState === 'visible',
+                frameAgeMs: lastPaintAt === null ? null : Math.round(now - lastPaintAt),
                 fps: Math.round((statsWindowFrames * 1000) / elapsed),
                 receivedFps: Math.round((receivedWindowFrames * 1000) / elapsed),
                 decodedFps: Math.round((decodedWindowFrames * 1000) / elapsed),
@@ -1026,12 +1018,15 @@
                 hevcChunksReceived: hevcChunksReceived,
                 bytesReceived: bytesReceived,
                 kbps: Math.round((statsWindowBytes * 8) / elapsed),
-                latencyMs: Math.round(latencyAvg),
-                latencyMaxMs: Math.round(latencyMax)
+                latencyMs: latencyAvg === null ? null : Math.round(latencyAvg),
+                latencyMaxMs: latencySamples > 0 ? Math.round(latencyMax) : null,
+                receiptToDecodeMs: receiptToDecodeSamples ? Math.round(receiptToDecodeSum * 10 / receiptToDecodeSamples) / 10 : null,
+                receiptToPaintMs: receiptToPaintSamples ? Math.round(receiptToPaintSum * 10 / receiptToPaintSamples) / 10 : null
             };
             if (latLabel) {
-                latLabel.textContent = latencySamples > 0 || latencyAvg > 0 ? '· ' + Math.round(latencyAvg) + 'ms' : '';
+                latLabel.textContent = latencyAvg !== null ? '· ' + Math.round(latencyAvg) + 'ms' : '';
             }
+            updateTelemetryStatus();
             console.log('[Stats]', JSON.stringify(stats5s));
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send('stats:' + JSON.stringify(stats5s));
@@ -1043,6 +1038,8 @@
             decodeErrors = 0;
             decodeQueuePeak = 0;
             replacedRenderCount = 0;
+            receiptToDecodeSum = receiptToDecodeSamples = 0;
+            receiptToPaintSum = receiptToPaintSamples = 0;
             latencySum = 0;
             latencySamples = 0;
             latencyMax = 0;
@@ -1062,7 +1059,7 @@
             const now = performance.now();
             // The host rate-limits encoder restarts. Retry after that window if our first
             // request was ignored, instead of waiting for the ten-minute periodic keyframe.
-            if (keyframeRequestPending && now - lastKeyframeRequest < 8500) return;
+            if (document.hidden || now - lastKeyframeRequest < 8500) return;
             keyframeRequestPending = true;
             lastKeyframeRequest = now;
             ws.send('forceidr');
@@ -1078,9 +1075,15 @@
                     videoDecoder.close();
                 }
 
+                decodeReceipts.clear();
+                const generation = ++decoderGeneration;
                 videoDecoder = new VideoDecoder({
-                    output: onVideoFrameDecoded,
+                    output: frame => {
+                        if (generation !== decoderGeneration || document.hidden) { frame.close(); return; }
+                        onVideoFrameDecoded(frame);
+                    },
                     error: (e) => {
+                        if (generation !== decoderGeneration || document.hidden) return;
                         const now = performance.now();
                         if (now - hevcErrorWindowStart > 60000) { hevcErrorWindowStart = now; hevcErrorCount = 0; }
                         hevcErrorCount++;
@@ -1128,7 +1131,7 @@
         }
 
         function changeCodec(val) {
-            if (codecSelect) codecSelect.value = val;
+            activeCodec = val;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send('codec:' + val);
             }
@@ -1140,50 +1143,11 @@
 
         function changeDepth(val) {
             const d = parseInt(val, 10) === 10 ? 10 : 8;
-            if (depthSelect) depthSelect.value = String(d);
+            activeDepth = d;
             // The server restarts the encoder and ships a fresh hvcC description, which
             // reconfigures the decoder via the desc: handler (with auto-revert to 8-bit
             // if this device rejects Main10).
             if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:' + d);
-        }
-
-        function getAutoDetectedResolution() {
-            const dpr = window.devicePixelRatio || 2;
-            const isLandscape = window.innerWidth >= window.innerHeight;
-            const sW = isLandscape ? Math.max(window.screen.width, window.screen.height) : Math.min(window.screen.width, window.screen.height);
-            const sH = isLandscape ? Math.min(window.screen.width, window.screen.height) : Math.max(window.screen.width, window.screen.height);
-
-            let targetW = Math.round(sW);
-            let targetH = Math.round(sH);
-
-            if (!targetW || targetW <= 0) targetW = window.innerWidth || 1180;
-            if (!targetH || targetH <= 0) targetH = window.innerHeight || 820;
-
-            targetW = Math.floor(targetW / 2) * 2;
-            targetH = Math.floor(targetH / 2) * 2;
-
-            let physW = Math.round(targetW * dpr);
-            let physH = Math.round(targetH * dpr);
-            physW = Math.floor(physW / 2) * 2;
-            physH = Math.floor(physH / 2) * 2;
-            return { width: physW, height: physH, logicalW: targetW, logicalH: targetH, dpr: dpr };
-        }
-
-        function getOptimalResolution() {
-            const selectedVal = resSelect ? resSelect.value : '2360x1640';
-            if (selectedVal && selectedVal !== 'auto') {
-                const atIdx = selectedVal.indexOf('@');
-                let hz = 60;
-                let resPart = selectedVal;
-                if (atIdx > 0) {
-                    hz = parseInt(selectedVal.substring(atIdx + 1), 10) || 60;
-                    resPart = selectedVal.substring(0, atIdx);
-                }
-                const [pw, ph] = resPart.split('x').map(Number);
-                return { width: pw, height: ph, hz: hz };
-            }
-            const auto = getAutoDetectedResolution();
-            return { width: auto.width, height: auto.height, hz: 60 };
         }
 
         function changeCursorMode(val) {
@@ -1204,51 +1168,14 @@
             }
         }
 
-        function changeQuality(val) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send('quality:' + val);
-            }
-        }
-
-        function changeDpi(val) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                console.log(`[DPI] Changing Windows Display Scale to: ${val}%`);
-                ws.send('dpi:' + val);
-            }
-        }
-
-        function changeZoom(val) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                console.log(`[Zoom] Setting UI Magnification: ${val}x`);
-                ws.send('zoom:' + val);
-            }
-        }
-
-        let lastResolutionRequest = '';
-        function syncResolutionNow() {
-            const opt = getOptimalResolution();
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                const hzStr = opt.hz > 0 ? ` @ ${opt.hz}Hz` : '';
-                console.log(`[Sync] Adjusting to target resolution: ${opt.width}x${opt.height}${hzStr}`);
-                const msg = opt.hz > 0 ? `set_res:${opt.width},${opt.height},${opt.hz}` : `set_res:${opt.width},${opt.height}`;
-                if (msg !== lastResolutionRequest) {
-                    ws.send(msg);
-                    lastResolutionRequest = msg;
-                }
-            }
-            // Browser chrome/fullscreen/resize events do not invalidate HEVC references.
-            // Only a new server description or a real decoder failure needs reconfiguration.
-        }
-
-        function changeResolutionPreset(val) {
-            syncResolutionNow();
-        }
-
         let wakeLock = null;
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
+                    const generation = streamGeneration;
+                    const lock = await navigator.wakeLock.request('screen');
+                    if (document.hidden || generation !== streamGeneration) { await lock.release(); return; }
+                    wakeLock = lock;
                     console.log('[WakeLock] Screen WakeLock active');
                 }
             } catch (e) { }
@@ -1311,18 +1238,9 @@
         }
 
         function syncSessionSettings() {
-            syncResolutionNow();
-            const c = (codecSelect ? codecSelect.value : 'hevc');
-            changeCodec(c); // explicit codec message every (re)connect — server always starts on a known path
-            const dd = (depthSelect ? depthSelect.value : '8');
-            changeDepth(dd);
-            const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.0';
-            changeZoom(z);
-            const sel = document.getElementById('display-select').value;
-            if (ws && ws.readyState === WebSocket.OPEN) ws.send('display:' + sel);
-            const cur = document.getElementById('cursor-select') ? document.getElementById('cursor-select').value : 'host';
+            if (hevcSupportKnown && !hevcSupported) changeCodec('intra');
+            const cur = document.getElementById('cursor-select').value;
             changeCursorMode(cur);
-            changeDpi(175);
         }
 
         function showAuthPrompt(err) {
@@ -1367,8 +1285,42 @@
             });
         }
 
+        async function decodeLatestJpeg() {
+            if (jpegDecoding || !pendingJpeg || document.hidden) return;
+            const job = pendingJpeg;
+            pendingJpeg = null;
+            jpegDecoding = true;
+            try {
+                let image;
+                if (window.createImageBitmap) {
+                    image = await createImageBitmap(job.blob);
+                } else {
+                    const url = URL.createObjectURL(job.blob);
+                    try {
+                        image = await new Promise((resolve, reject) => {
+                            const img = new Image();
+                            img.onload = () => resolve(img);
+                            img.onerror = reject;
+                            img.src = url;
+                        });
+                    } finally { URL.revokeObjectURL(url); }
+                }
+                if (job.generation !== streamGeneration || document.hidden) {
+                    if (image.close) image.close();
+                    jpegDrops++;
+                } else {
+                    renderDirect(image, image.naturalWidth || image.width, image.naturalHeight || image.height);
+                }
+            } catch (e) {
+                decodeErrors++;
+            } finally {
+                jpegDecoding = false;
+                decodeLatestJpeg();
+            }
+        }
+
         function handleBinaryPacket(data) {
-            if (!(data instanceof ArrayBuffer)) return;
+            if ((document.hidden && !backgroundGraceActive()) || !(data instanceof ArrayBuffer) || data.byteLength < 15) return;
             bytesReceived += data.byteLength;
             statsWindowBytes += data.byteLength;
             const headerView = new DataView(data, 0, 15);
@@ -1387,6 +1339,13 @@
                 hevcChunksReceived++;
                 receivedWindowFrames++;
                 if (!videoDecoder || videoDecoder.state !== 'configured') return;
+                if (decodeReceipts.size >= MAX_RECEIPT_ENTRIES) decodeReceipts.clear();
+                decodeReceipts.set(Number(timestampUs), performance.now());
+                // A full reset drops queued work; delta frames cannot resume the old reference chain.
+                if (videoDecoder.decodeQueueSize >= MAX_DECODE_QUEUE) {
+                    decodeQueuePeak = Math.max(decodeQueuePeak, videoDecoder.decodeQueueSize);
+                    if (!recoverHevcDecoder()) return;
+                }
                 if (needsHevcKeyframe && !isKeyframe) {
                     requestHevcKeyframe();
                     return;
@@ -1398,6 +1357,8 @@
                         data: payloadBytes
                     });
                     decodeQueuePeak = Math.max(decodeQueuePeak, videoDecoder.decodeQueueSize);
+                    if (decodeReceipts.size >= MAX_RECEIPT_ENTRIES) decodeReceipts.clear();
+                    decodeReceipts.set(Number(timestampUs), performance.now());
                     videoDecoder.decode(chunk);
                     needsHevcKeyframe = false;
                     if (isKeyframe) keyframeRequestPending = false;
@@ -1406,6 +1367,7 @@
                     decodeErrors++;
                     needsHevcKeyframe = true;
                     requestHevcKeyframe();
+                    decodeReceipts.delete(Number(timestampUs));
                     console.warn('[HEVC Chunk Decode Error]', err);
                 }
                 return; // HEVC is never a JPEG, including on a decode failure.
@@ -1415,48 +1377,42 @@
             if (codecType !== 0) return;
             receivedWindowFrames++;
             try {
-                const blob = new Blob([payloadBytes], { type: 'image/jpeg' });
-                let rendered = false;
-
-                if (window.createImageBitmap) {
-                    try {
-                        // Latest-wins: only paint the bitmap if no newer JPEG packet
-                        // arrived while decode was in flight (bursts can resolve
-                        // out of order — a stale bitmap must never overwrite a newer frame).
-                        jpegSeq++;
-                        const seq = jpegSeq;
-                        createImageBitmap(blob).then(bmp => {
-                            if (seq !== jpegSeq) {
-                                jpegDrops++;
-                                if (bmp.close) bmp.close();
-                                return;
-                            }
-                            renderDirect(bmp, bmp.width, bmp.height);
-                            // The presentation loop owns the bitmap until it is painted/replaced.
-                        }).catch(() => {});
-                        rendered = true;
-                    } catch (e) { }
-                }
-
-                if (!rendered) {
-                    const url = URL.createObjectURL(blob);
-                    const img = new Image();
-                    img.onload = () => {
-                        renderDirect(img, img.naturalWidth, img.naturalHeight);
-                        URL.revokeObjectURL(url);
-                    };
-                    img.onerror = () => {
-                        URL.revokeObjectURL(url);
-                    };
-                    img.src = url;
-                }
+                if (pendingJpeg) jpegDrops++;
+                pendingJpeg = { blob: new Blob([payloadBytes], { type: 'image/jpeg' }), generation: streamGeneration };
+                decodeLatestJpeg();
             } catch (err) {
                 console.error('[Render Error]', err);
             }
         }
 
+        function suspendStream() {
+            clearTimeout(backgroundTimer);
+            backgroundTimer = null;
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+            const socket = ws;
+            ws = null;
+            if (socket) socket.close();
+            streamGeneration++;
+            decoderGeneration++;
+            decodeReceipts.clear();
+            pendingJpeg = null;
+            if (videoDecoder && videoDecoder.state !== 'closed') videoDecoder.close();
+            videoDecoder = null;
+            clearPendingDrawable();
+            resetTelemetry();
+            if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+            updateTelemetryStatus();
+        }
+
         function connectWs() {
-            lastResolutionRequest = '';
+            if (!localPreviewApproved) {
+                document.getElementById('local-preview-overlay').hidden = false;
+                updateTelemetryStatus();
+                return;
+            }
+            if (document.hidden) return;
+            suspendStream();
             clockOffsetMs = null;
             minRttMs = Infinity;
             recentRttHistory = [];
@@ -1472,43 +1428,25 @@
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             // Announce the codec in the URL so the very first frame is already HEVC (avoids a
             // one-frame JPEG flash while the codec message is still in flight).
-            const initialCodec = codecSelect ? codecSelect.value : 'hevc';
-            ws = new WebSocket(`${protocol}//${location.host}/?codec=${encodeURIComponent(initialCodec)}`);
+            const initialCodec = hevcSupportKnown && !hevcSupported ? 'intra' : 'hevc';
+            const socket = new WebSocket(`${protocol}//${location.host}/?codec=${encodeURIComponent(initialCodec)}`);
+            ws = socket;
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = async () => {
+                if (ws !== socket || document.hidden) return;
                 console.log('[OpenWinSidecar] Stream Connected');
                 requestWakeLock();
                 sendSync();
-                syncResolutionNow();
 
-                // ALWAYS send an explicit codec choice so the server starts streaming on a
-                // known path. The probe refines it when it resolves (fail-safe: a hung or
-                // throwing isConfigSupported on some Safari versions can never stall the
-                // stream — JPEG flows immediately, HEVC upgrades it when confirmed).
-                const z = document.getElementById('zoom-select') ? document.getElementById('zoom-select').value : '1.0';
-                changeZoom(z);
-
-                const sel = document.getElementById('display-select').value;
-                ws.send('display:' + sel);
-
-                const cur = document.getElementById('cursor-select') ? document.getElementById('cursor-select').value : 'host';
-                changeCursorMode(cur);
-                changeDpi(175);
-
-                let c = (codecSelect ? codecSelect.value : 'hevc');
-                changeCodec(c); // start streaming NOW with the current selection (default: hevc -> server encodes; probe may switch to intra)
-
-                if (c === 'hevc') {
-                    const canHevc = await detectHevcSupportSafe();
-                    if (!canHevc) {
-                        codecSelect.value = 'intra';
-                        changeCodec('intra');
-                    }
-                }
+                syncSessionSettings();
+                const canHevc = await detectHevcSupportSafe();
+                if (ws !== socket || document.hidden) return;
+                changeCodec(canHevc ? 'hevc' : 'intra');
             };
 
             ws.onmessage = async (e) => {
+                if (ws !== socket || (document.hidden && !backgroundGraceActive())) return;
                 if (typeof e.data === 'string') {
 
                     // Server-side control messages
@@ -1528,11 +1466,12 @@
                                 console.warn('[WebCodecs] bad hvcC payload', err);
                                 pendingHvcC = null;
                             }
-                            if (codecSelect && codecSelect.value === 'hevc') {
-                                if (!initHevcDecoder() && depthSelect) {
+                            activeCodec = 'hevc';
+                            {
+                                if (!initHevcDecoder()) {
                                     // This device rejects the stream's profile (e.g. Main10) —
                                     // drop back to 8-bit instead of a black screen.
-                                    depthSelect.value = '8';
+                                    activeDepth = 8;
                                     if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:8');
                                     console.warn('[Color] Stream profile rejected by decoder — reverted to 8-bit');
                                 }
@@ -1565,7 +1504,7 @@
                     }
                     // Server-side codec fallback notification (e.g. QSV encoder unavailable)
                     if (e.data === 'codec:intra') {
-                        if (codecSelect) codecSelect.value = 'intra';
+                        activeCodec = 'intra';
                     }
                     return;
                 }
@@ -1575,16 +1514,10 @@
             };
 
             ws.onclose = () => {
-                const fps = document.getElementById('fps');
-                if (fps) fps.textContent = '⟳ reconnecting';
-                setTimeout(connectWs, 1000);
+                if (ws !== socket) return;
+                suspendStream();
+                if (!document.hidden) reconnectTimer = setTimeout(connectWs, 1000);
             };
-        }
-
-        function changeDisplay(val) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send('display:' + val);
-            }
         }
 
         function sendInput(action, e) {
@@ -1819,13 +1752,12 @@
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().then(() => {
-                    setTimeout(syncResolutionNow, 150);
+                    setTimeout(() => {}, 0);
                 }).catch(() => {
-                    syncResolutionNow();
                 });
             } else {
                 document.exitFullscreen().then(() => {
-                    setTimeout(syncResolutionNow, 150);
+                    setTimeout(() => {}, 0);
                 }).catch(() => {});
             }
         }
@@ -1851,25 +1783,21 @@
             } else {
                 document.body.classList.remove('is-fullscreen');
             }
-            setTimeout(syncResolutionNow, 200);
+            setTimeout(() => {}, 0);
         }
         document.addEventListener('fullscreenchange', handleFullscreenState);
         document.addEventListener('webkitfullscreenchange', handleFullscreenState);
         let resolutionSyncTimer;
         function scheduleResolutionSync() {
             clearTimeout(resolutionSyncTimer);
-            resolutionSyncTimer = setTimeout(syncResolutionNow, 200);
+            resolutionSyncTimer = setTimeout(() => {}, 0);
         }
         window.addEventListener('resize', scheduleResolutionSync);
         window.addEventListener('orientationchange', scheduleResolutionSync);
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') setTimeout(syncResolutionNow, 100);
-            // Returning from a backgrounded tab: Safari may have evicted decoder state, so
-            // ask the server to restart the encoder — the next frame is a fresh IDR and the
-            // delta chain can never reference frames the decoder no longer has.
-            if (document.visibilityState === 'visible' && authenticated && codecSelect.value === 'hevc' && ws && ws.readyState === WebSocket.OPEN) {
-                requestHevcKeyframe();
-            }
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('pagehide', suspendStream);
+        window.addEventListener('pageshow', () => {
+            if (!document.hidden && !ws) connectWs();
         });
 
         connectWs();

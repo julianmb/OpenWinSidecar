@@ -54,10 +54,13 @@ public class NetworkDiscoveryService
     public static (int Priority, string Category) ClassifyEndpoint(string name, string desc, string ifType, string ip)
     {
         string combined = (name + " " + desc).ToLowerInvariant();
+        string descLower = desc.ToLowerInvariant();
 
         // Word-boundary token match: "tap" must not match "Desktop", "tun" not "tuned", etc.
         bool HasToken(string token) => combined.Split(' ', '-', '_', '(', ')', '#', '.')
                                                .Any(t => t == token);
+        bool DescHasToken(string token) => descLower.Split(' ', '-', '_', '(', ')', '#', '.')
+                                                    .Any(t => t == token);
 
         // 1. Filter out unusable link-local APIPA addresses (169.254.x.x)
         if (ip.StartsWith("169.254.") || ip.StartsWith("127.") || string.IsNullOrEmpty(ip))
@@ -65,9 +68,11 @@ public class NetworkDiscoveryService
             return (0, "Disabled");
         }
 
-        // 2. Apple USB Tethering / NDIS / RNDIS / USB Ethernet (Highest priority - wired 0ms latency)
+        // 2. Apple USB Tethering / NDIS / RNDIS / NCM (Highest priority - wired 0ms latency).
+        // The usb+ethernet pair must both appear in the DESCRIPTION: a plain USB Ethernet
+        // dongle named "Ethernet 2" must stay wired-ethernet, not claim the iPad cable.
         if (combined.Contains("apple") || HasToken("rndis") || HasToken("ncm") ||
-            HasToken("tether") || (combined.Contains("usb") && combined.Contains("ethernet")))
+            HasToken("tether") || (DescHasToken("usb") && DescHasToken("ethernet")))
         {
             return (100, "⚡ USB Cable");
         }

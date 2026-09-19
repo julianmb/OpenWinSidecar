@@ -3,6 +3,196 @@
 Every change to this project is documented here: **what** was changed, **why**, and **how it was verified**. New entries go at the top. The commit history (`git log`) carries the same explanations per commit; this file is the human-readable narrative.
 
 ---
+## 2026-09-19 — 6-hour soak: flat 65ms latency, zero churn (30→60 FPS + keep-alive)
+
+- Monitor sampled the service log every minute for 6 hours (360 samples): glass-to-
+  glass latency avg 65ms, p50 65ms, p95 69ms, max 76ms — flat for the entire window,
+  no drift, no spikes above 76ms. Receipt-to-paint on the viewer avg 15.7ms, max 19ms.
+- Zero encoder restarts after the initial start, zero decode errors, zero dropped
+  renders across the whole soak; the keep-alive, hysteresis, and warmup-guard fixes
+  held under real use. Log flood fix verified: sidecar.log stayed at 302 bytes idle.
+- receivedFps ranged 25–52 with motion (paint follows at rAF cadence); latency stayed
+  constant regardless, confirming the remaining budget is pacing + transit, not
+  encoder state.
+- Validation: passive observation only; no code changes in this entry.
+
+---
+
+## 2026-09-19 — Log flood fix: parser diagnostics per window, not per frame
+
+- The parser-stall telemetry added with the encoder instrumentation logged once per
+  access unit instead of once per diagnostics window: at 30-60 FPS that was ~97% of
+  sidecar.log (32k+ lines in hours, driving the 5MB rotation). The parser line now
+  flushes only when the sink's 5-second stage window releases, alongside the other
+  aggregates — the data is identical, the volume is frame-rate-independent.
+- After the fix the log grows a few bytes per minute at idle and a handful of lines
+  per 5s window while streaming. Existing oversized logs were truncated during the
+  restart; rotation policy (5MB + one .1) is unchanged.
+- Validation: 121 .NET tests; live session log volume verified before/after.
+
+---
+
+## 2026-09-19 — 60 FPS default across the stack
+
+- The stream default is now 60 FPS (host settings record, sink default, desktop
+  combo, and UI fallback all agree). 60 was chosen deliberately when the user set
+  it, but the desktop-owned migration had silently reintroduced 30; the registry on
+  this machine was also set to 60 so the current install streams at 60 immediately.
+- Verified live: receivedFps 30 during interactive motion with decode keeping pace
+  (no backlog), pacing wait collapsed from ~29-33ms (a 30 FPS slot) to ~0.1ms, and
+  viewer glass-to-glass dropped to ~64-66ms (from ~86-127ms at 30 FPS). Displayed
+  fps reads lower than received because the stats window mixes idle (keep-alive)
+  and motion periods by design.
+- Validation: 121 .NET tests (the sink default test now asserts 60), live session.
+
+---
+
+## 2026-09-19 — Encoder internals instrumented; parser hold cut from 33ms to ~8ms
+
+- Attacked the ~60ms capture-to-encoder-output stage by measuring inside it. New
+  per-window parser diagnostics log two numbers the sink could not see before:
+  ffmpeg internal (raw push → first VCL NAL of the encoded frame, ~4.6ms avg) and
+  parser hold (first VCL → AU flushed, ~4–8ms after the fix, was up to 33ms).
+- Fixed the AU flush backstop from 33ms to 8ms: the LAST access unit of a burst has
+  no following start code to prove its end and previously sat a full frame interval
+  (33ms at 30 FPS) in the Annex-B accumulator before the timer released it. Mid-burst
+  AUs were already flushed by the next AU's first slice; only the trailing one paid.
+- Instrumentation notes: the push stamp uses the encoder's Stopwatch epoch (the hub
+  clock starts at hub construction; mixing epochs read as a >10s delta and was
+  correctly rejected by the plausibility guard — that guard caught my first attempt).
+- Measured budget after the fix (steady state, 30 FPS): raw push 0.5ms → ffmpeg
+  internal ~4.6ms → parser hold ~4ms → ordered-send wait ~0–12ms → pacing wait
+  ~21–33ms (a pacing-grid slot, by design) → socket write 0.1ms. The previously
+  reported 44–60ms "captureTimestampToOutput" includes waiting for the pacing slot
+  and the ordered tail, not encoder cost. Viewer glass-to-glass improved to ~86–127ms
+  (from ~125–160ms) with the same 30 FPS setting.
+- Validation: 121 .NET tests; live session with the parser metrics visible.
+
+---
+
+## 2026-09-19 — Latency: encoder keep-alive, churn fixes; live diagnosis
+
+- Live telemetry (viewer stats + server stage diagnostics) located the felt latency:
+  the iPad decodes and paints in 13–29 ms with no backlog — the cost is server-side
+  (~75–100 ms capture-to-encoder-output, plus a 75–440 ms QSV wake-up on the first
+  frame after an idle stretch) and the stream was still at 30 FPS (desktop-owned
+  setting), not 60.
+- Encoder keep-alive: a static desktop no longer idles the encoder to sleep. The
+  unchanged bitmap is re-encoded every 500 ms (HEVC only; a delta frame of unchanged
+  pixels is tiny), so ffmpeg/QSV stays hot and motion never pays the wake-up stall.
+  Both idle-skip early returns were extended to let keep-alive composes through.
+- Adaptive-scale calm-upgrade hold (3 s): the leaky motion score crossed the calm
+  threshold after ~150 ms of stillness, so touch-pause-touch cycles flipped half/full
+  encode size — and every flip respawns the encoder + emits an IDR. Upgrades to full
+  res now require 3 s of stillness; engaging half-res on motion remains immediate.
+- Warmup geometry guard: the connection-time warmup no longer recreates an encoder
+  when the compose path already built one (including the adaptive half-res size);
+  this kills the observed full/half-size encoder pairs starting within seconds.
+- Validation: 121 .NET tests (new: HEVC keep-alive compose on static desktop after
+  the feed interval, calm-hold constant floor, plus existing idle-skip and forceidr
+  coverage). Live session after deploy: encoder starts stopped churning (2 = warmup +
+  one scale flip), latency steady at 119–130 ms with 30 FPS delivered (60 FPS pending
+  user setting change).
+
+---
+
+## 2026-09-19 — iPad-over-USB driver detection with install guidance
+
+- Streaming over the USB cable (the lowest-latency path — no Wi-Fi airtime, no packet
+  loss) requires Apple's "Apple Mobile Device Ethernet" driver, installed by the free
+  Apple Devices app or iTunes. Nothing detected its absence: the checkbox said iOS USB
+  and the connect card silently showed only Wi-Fi. The new `AppleUsbSupport` probe
+  (Core) detects an attached Apple mobile device via the USB registry (`VID_05AC`)
+  and classifies the driver as ready (adapter present) or missing, distinguishing
+  "no device attached" from "device attached, driver missing".
+- The desktop Connection card now shows a third status line: green "iPad over USB
+  ready — open http://<usb-ip>:8080" when the adapter is up (the connect URL/QR still
+  follow the selected endpoint), or an amber "network driver is missing" notice with
+  an **Install driver** button that opens the Microsoft Store page for Apple Devices
+  (deep link `ms-windows-store://pdp/?ProductId=9NP83LWLPZ9K`, web fallback). Hidden
+  entirely when no Apple device is plugged in.
+- Fixed the endpoint classifier over-matching: `usb`+`ethernet` must now both appear
+  in the adapter *description*, so a plain USB Ethernet dongle named "Ethernet 2" is
+  wired-ethernet (80) rather than claiming the iPad-cable priority (100).
+- Validation: 119 .NET tests (4 new: classifier Apple/generic-USB split, driver-state
+  consistency with device attachment, Store product-id format), desktop build, live
+  restart — with an iPad attached and no driver, the hint and Install button render
+  and the stream stays up.
+
+---
+
+## 2026-09-17 — Desktop-owned stream controls; viewer reduced to iPad-local settings
+
+- Stream settings moved to the desktop app's new **Stream Controls** card (display,
+  FPS 30/60, quality, codec, color depth, magnification), persisted under
+  `HKCU\Software\OpenWinSidecar\Stream`. The server now owns these values
+  (`HostStreamSettings`): they are applied directly to every connected sink and to
+  each new session, and viewer text commands that set them (`display:`, `fps:`,
+  `quality:`, `set_res:`, `dpi:`, `zoom:`, `mode:`) are ignored. Per-device
+  capability signals remain: a viewer without HEVC still gets JPEG, and a device
+  that rejects Main10 still gets 8-bit. Changing the streamed display disconnects
+  affected viewers so producer subscription and input mapping rebuild together.
+- The viewer settings modal now contains only iPad-local controls (cursor mode,
+  fullscreen, keyboard, aspect, PWA help, companion-app link). Reconnects,
+  authentication, and codec probes no longer send settings back to the host; the
+  codec is chosen purely from device capability.
+- Viewer telemetry correction: the previously added `decodeToPaintMs` actually
+  measured receipt-to-decode-output. It is now named `receiptToDecodeMs`, and a
+  real `receiptToPaintMs` (packet receipt through paint) was added; both reset
+  with the stats window and on session reset, and receipt tracking moved
+  to accepted packets only.
+- The client FPS selector, resolution presets, and DPI/zoom options were removed
+  from the viewer; the desktop "Target resolution" / "Windows display scale"
+  controls continue to drive the monitor itself. The pacing grid was reviewed:
+  late sends already restart the grid rather than bank catch-up slots, so no
+  pacing change was needed.
+- Validation: 115 .NET tests, 29 viewer runtime tests (including separate decode/paint
+  timing and empty-window reset coverage), desktop build, and a live
+  restart showing the populated controls and the new viewer served on :8080.
+
+---
+
+
+- The stream now defaults to **30 FPS**, selectable 30/60 in the viewer settings,
+  independent of the virtual monitor's refresh rate. `set_res` no longer overrides
+  the stream cadence; explicit 120 Hz display presets remain display-only. Live
+  iPad comparison (30 vs 60) is still pending.
+- Server stage diagnostics (bounded 5-second aggregates, no per-frame logs): raw
+  push duration, ordered-send wait, pacing wait, socket lock/write, pending sends,
+  and valid timestamp-to-output latency. The latter includes compose/raw waiting,
+  not pure encoder time.
+- HEVC timestamps are now per-encoder-generation: retired encoder callbacks cannot
+  consume a new generation's timestamps, failed pushes retire the generation, and
+  missing/unconfirmed timestamps are reported rather than fabricated. Descriptions
+  and packets share the ordered send queue, so an old packet can't follow a new
+  description.
+- Viewer: removed the decode-queue-based output drop (decoder backlog is already
+  bounded at 8 with clean keyframe recovery); latest-frame-wins staging remains.
+  Added decode-side timing telemetry (superseded the same day — see the entry
+  above for the corrected `receiptToDecodeMs`/`receiptToPaintMs` metrics).
+- Validation: 115 .NET tests, 34 viewer tests. Not yet validated on live iPad.
+
+---
+
+## 2026-09-17 — Viewer freshness, bounded decoding, and safer preview lifecycle
+
+- Viewer frame readings expire after 10 seconds; dashboard telemetry expires after
+  15 seconds. Missing latency samples no longer retain an old average.
+- HEVC backlog recovery closes the old decoder at eight queued chunks and waits for
+  a keyframe, with rate-limited recovery requests. JPEG has one active decode and
+  one latest waiting packet; callbacks from old sessions cannot paint new sessions.
+- Background tabs retain their connection and HEVC references for a three-second
+  grace period, avoiding reconnection on brief switches. Longer absences disconnect;
+  returning also checks elapsed time in case Safari suspended the timer.
+- Local previews require an explicit start and warn about capturing their own window.
+  The host identifies direct local connections, including access via its LAN address;
+  the desktop action is named "Preview on this PC". This is a usability guard, not
+  monitor-position detection or an authentication boundary.
+- Validation uses viewer runtime and .NET regression tests. Actual iPad tuning is
+  pending: no live host/viewer connection was available. The eight-chunk limit remains
+  a starting value, not a hardware-measured optimum.
+
+---
 
 ## 2026-09-16 — Banner/version/mirror fixes: five smaller improvements
 

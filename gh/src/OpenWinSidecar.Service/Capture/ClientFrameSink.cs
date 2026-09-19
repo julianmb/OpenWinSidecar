@@ -40,6 +40,8 @@ public sealed class ClientFrameSink : IDisposable
 
     public volatile bool ShowHostCursor = true;
     public volatile StreamCodec Codec = StreamCodec.IntraTurbo;
+    internal volatile bool HevcSupported = true;
+    internal volatile bool Main10Supported = true;
     public volatile int ColorDepth = 8; // 8 or 10 (Main10); 10-bit smooths gradients, costs a CPU pixel conversion
 
     private readonly FrameBroadcastHub _hub;
@@ -69,7 +71,16 @@ public sealed class ClientFrameSink : IDisposable
     private static readonly ConcurrentDictionary<ClientFrameSink, byte> ActiveSinks = new();
     private readonly DateTime _connectedUtc = DateTime.UtcNow;
     private volatile string _remoteAddress = "";
+    private readonly object _statsLock = new();
     private int _lastFps, _lastKbps, _lastLatencyMs;
+    private DateTime? _lastStatsUtc;
+    private bool? _clientVisible;
+    private double? _frameAgeMs;
+    private bool _hasFrameAge;
+    private DateTime? _lastReportedFrameUtc;
+    internal DateTime? LastStatsUtc { get { lock (_statsLock) return _lastStatsUtc; } }
+    private static readonly TimeSpan StatsStaleThreshold = TimeSpan.FromSeconds(15);
+    private const double RecentFrameThresholdMs = 10_000;
 
     // Last time we heard from the client (read or stats message). A stale-client
     // sweep timer evicts sinks with no activity for >60s so zombie connections
@@ -154,11 +165,23 @@ public sealed class ClientFrameSink : IDisposable
         return false;
     }
 
-    internal void UpdateClientStats(int fps, int kbps, int latencyMs)
+    internal void UpdateClientStats(int fps, int kbps, int? latencyMs,
+        bool? visible = null, double? frameAgeMs = null, bool hasFrameAge = false, DateTime? nowUtc = null)
     {
-        _lastFps = fps;
-        _lastKbps = kbps;
-        _lastLatencyMs = latencyMs;
+        var now = nowUtc ?? DateTime.UtcNow;
+        lock (_statsLock)
+        {
+            _lastFps = Math.Max(0, fps);
+            _lastKbps = Math.Max(0, kbps);
+            // Null explicitly clears the previous sample; it must never survive into aggregates.
+            _lastLatencyMs = Math.Max(0, latencyMs ?? 0);
+            _lastStatsUtc = now;
+            _clientVisible = visible;
+            _frameAgeMs = frameAgeMs;
+            _hasFrameAge = hasFrameAge || frameAgeMs.HasValue;
+            // Older clients omit frameAgeMs. Positive FPS is their only evidence of a paint.
+            if (_lastFps > 0) _lastReportedFrameUtc = now;
+        }
         MarkActivity();
     }
 
@@ -174,30 +197,58 @@ public sealed class ClientFrameSink : IDisposable
         public int Kbps { get; init; }
         public int LatencyMs { get; init; }
         public double UptimeSeconds { get; init; }
+        public bool HasStats { get; init; }
+        public bool StatsFresh { get; init; }
+        public bool HasRecentFrames { get; init; }
+        public bool? Visible { get; init; }
+        public double? FrameAgeMs { get; init; }
+        public bool MetricsFresh => StatsFresh && Visible != false && HasRecentFrames;
 
         public string ResolutionText => Width > 0 && Height > 0 ? $"{Width}×{Height}" : "";
-        public string FpsText => Fps > 0 ? $"{Fps} fps" : "";
-        public string LatencyText => LatencyMs > 0 ? $"{LatencyMs} ms" : "";
+        public string FpsText => !HasStats ? "Waiting" : !StatsFresh ? "Stale"
+            : Visible == false ? "Hidden" : !HasRecentFrames ? "No recent frames" : $"{Fps} fps";
+        public string LatencyText => MetricsFresh && LatencyMs > 0 ? $"{LatencyMs} ms" : "—";
         public string BitrateText => Kbps > 0 ? $"{Kbps / 1000.0:F1} Mbps" : "";
     }
 
-    public static List<ConnectedClientSnapshot> Snapshot()
+    public static List<ConnectedClientSnapshot> Snapshot(DateTime? nowUtc = null)
     {
+        var now = nowUtc ?? DateTime.UtcNow;
         var list = new List<ConnectedClientSnapshot>();
         foreach (var sink in ActiveSinks.Keys)
         {
-            list.Add(new ConnectedClientSnapshot
+            lock (sink._statsLock)
             {
-                DeviceName = sink.DeviceName,
-                RemoteAddress = sink._remoteAddress,
-                Width = sink.TargetWidth,
-                Height = sink.TargetHeight,
-                Codec = sink.Codec == StreamCodec.HEVC ? "HEVC" : "JPEG",
-                Fps = sink._lastFps,
-                Kbps = sink._lastKbps,
-                LatencyMs = sink._lastLatencyMs,
-                UptimeSeconds = (DateTime.UtcNow - sink._connectedUtc).TotalSeconds,
-            });
+                bool statsFresh = sink._lastStatsUtc is DateTime statsUtc
+                    && now - statsUtc < StatsStaleThreshold;
+                double elapsedMs = sink._lastStatsUtc is DateTime receivedUtc
+                    ? Math.Max(0, (now - receivedUtc).TotalMilliseconds) : 0;
+                // Explicit null means never painted, unlike an omitted legacy field.
+                double? frameAge = sink._hasFrameAge
+                    ? sink._frameAgeMs + elapsedMs
+                    : sink._lastReportedFrameUtc is DateTime frameUtc
+                        ? Math.Max(0, (now - frameUtc).TotalMilliseconds) : null;
+                bool recentFrames = frameAge is >= 0 and < RecentFrameThresholdMs;
+                bool metricsFresh = statsFresh && sink._clientVisible != false && recentFrames;
+                list.Add(new ConnectedClientSnapshot
+                {
+                    DeviceName = sink.DeviceName,
+                    RemoteAddress = sink._remoteAddress,
+                    Width = sink.TargetWidth,
+                    Height = sink.TargetHeight,
+                    Codec = sink.Codec == StreamCodec.HEVC ? "HEVC" : "JPEG",
+                    HasStats = sink._lastStatsUtc.HasValue,
+                    StatsFresh = statsFresh,
+                    HasRecentFrames = recentFrames,
+                    Visible = sink._clientVisible,
+                    FrameAgeMs = frameAge,
+                    // Consumers aggregate these values directly, so suppress expired samples here.
+                    Fps = metricsFresh ? sink._lastFps : 0,
+                    Kbps = statsFresh ? sink._lastKbps : 0,
+                    LatencyMs = metricsFresh ? sink._lastLatencyMs : 0,
+                    UptimeSeconds = (now - sink._connectedUtc).TotalSeconds,
+                });
+            }
         }
         return list;
     }
@@ -210,9 +261,8 @@ public sealed class ClientFrameSink : IDisposable
     private int _composeLogged;
     private int _sendLogged;
     private volatile bool _hevcRestartRequested;
-    private Task? _descSendTask;
-    private Task? _hevcSendTask; // in-flight asynchronous send of the last HEVC access unit
-    private int _hevcSendsInFlight;
+    private Task? _hevcSendTask; // ordered tail, retained across encoder restarts until sends drain
+    private int _hevcSendsInFlight; // includes queued/paced sends, not just socket writes
     private readonly object _encoderLock = new(); // serializes consumer inits with setup-time warmup
 
     // ---- adaptive encode scale (fluidity-first): sustained pixel motion encodes at half
@@ -222,9 +272,12 @@ public sealed class ClientFrameSink : IDisposable
     // Kill-switch: SIDECAR_ADAPTIVE_SCALE=0 pins full-res (A/B measurement or escape hatch).
     internal static readonly bool AdaptiveScaleEnabled =
         Environment.GetEnvironmentVariable("SIDECAR_ADAPTIVE_SCALE") != "0";
+    /// <summary>Stillness required before upgrading back to full res (encoder respawn is costly).</summary>
+    internal static readonly int CalmUpgradeHoldMs = 3000;
     private double _motionScore;
     private double _encodeScale = 1.0;
     private double _lastEncodeScale = 1.0;
+    private long _lastMotionTicks;
 
     // ---- idle detection (written by the producer thread between composes) ----
     private bool _hasComposedOnce;
@@ -242,18 +295,20 @@ public sealed class ClientFrameSink : IDisposable
     // ---- HEVC encoder state (owned by the consumer tenure) ----
     private HevcStreamEncoder? _hevcEncoder;
     private int _encoderWidth, _encoderHeight, _encoderBitrate, _encoderFramerate, _encoderDepth;
-    private readonly ConcurrentQueue<long> _hevcTimestamps = new();
-    private long _hevcFrameIndex;
+    private HevcGeneration? _hevcGeneration;
+    private readonly SinkStageDiagnostics _stageDiagnostics;
     private DateTime _nextHevcAttemptUtc = DateTime.MinValue;
     private bool _hevcRetryPending;
     private int _hevcFailConsecutive = 0;
     private int _lastColorDepth = 8;
+    private long _lastHevcFeedTicks; // last successful raw push (real motion or keep-alive)
 
     private static readonly ImageCodecInfo JpegEncoder = GetJpegEncoder();
 
     public ClientFrameSink(FrameBroadcastHub hub, NetworkStream stream, SemaphoreSlim streamLock, string deviceName)
     {
         _hub = hub;
+        _stageDiagnostics = new SinkStageDiagnostics(hub.NowUs());
         _stream = stream;
         _streamLock = streamLock;
         DeviceName = deviceName;
@@ -306,7 +361,11 @@ public sealed class ClientFrameSink : IDisposable
         double wantScale = _encodeScale;
         if (!AdaptiveScaleEnabled) wantScale = 1.0;
         else if (_motionScore > 5.0) wantScale = 0.5;
-        else if (_motionScore < 2.0) wantScale = 1.0;
+        // Calm-upgrade hold: upgrading costs an encoder respawn + IDR burst, and the leaky
+        // score drops below 2.0 after ~150ms of stillness — without a hold, touch-pause-touch
+        // cycles flip the scale (and respawn the encoder) every couple of seconds.
+        else if (_motionScore < 2.0 && Environment.TickCount64 - _lastMotionTicks >= CalmUpgradeHoldMs) wantScale = 1.0;
+        if (_motionScore >= 2.0) _lastMotionTicks = Environment.TickCount64;
         if (wantScale != _encodeScale)
         {
             _encodeScale = wantScale;
@@ -333,7 +392,16 @@ public sealed class ClientFrameSink : IDisposable
                 || (_hevcRetryPending && DateTime.UtcNow >= _nextHevcAttemptUtc));
         bool pendingRecovery = _missedFrames || pendingHevcWork;
 
-        if (!frame.Captured && !cursorChanged && !settingsChanged && !pendingRecovery)
+        // Encoder keep-alive: QSV pays a 75-440ms wake-up (surface upload + pipe flush)
+        // on the first frame after a silent stretch, and that stall lands exactly on the
+        // motion that ended the idle — the "first move after idle rubber-bands" artifact.
+        // Re-encoding the current bitmap every 500ms keeps ffmpeg hot; a delta frame of
+        // unchanged pixels costs <2kB and no client-vsense-visible burst.
+        bool keepAliveDue = frame.Captured == false && Codec == StreamCodec.HEVC
+            && _hasComposedOnce && !pendingHevcWork
+            && (Environment.TickCount64 - _lastHevcFeedTicks) >= 500;
+
+        if (!frame.Captured && !cursorChanged && !settingsChanged && !pendingRecovery && !keepAliveDue)
             return true; // idle — nothing new to send, not an error
 
         if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0)
@@ -453,7 +521,7 @@ public sealed class ClientFrameSink : IDisposable
                     if (newCursorRect.Width > 0)
                         AddClippedRect(_sinkDirtyScratch, newCursorRect, dstW, dstH);
 
-                    if (_sinkDirtyScratch.Count == 0 && !cursorChanged && !pendingHevcWork)
+                    if (_sinkDirtyScratch.Count == 0 && !cursorChanged && !pendingHevcWork && !keepAliveDue)
                     {
                         Interlocked.Exchange(ref _busy, 0);
                         return true; // change lies outside the crop and the cursor is static
@@ -873,28 +941,50 @@ public sealed class ClientFrameSink : IDisposable
 
     private HevcStreamEncoder? CreateHevcEncoder(int width, int height, int bitrate, int framerate, int depth)
     {
+        var generation = new HevcGeneration();
         var encoder = new HevcStreamEncoder((nalBytes, isKeyframe) =>
         {
-            // -bf 0 preserves input order, so one queued timestamp per NAL packet
-            long frameIntervalUs = 1_000_000 / framerate;
-            long ts = _hevcTimestamps.TryDequeue(out var queued)
-                ? queued
-                : Interlocked.Increment(ref _hevcFrameIndex) * frameIntervalUs;
-            // Track the in-flight send so PushToHevcAsync can apply backpressure
-            Volatile.Write(ref _hevcSendTask, SendHevcPacketAsync(nalBytes, isKeyframe, ts));
+            long outputUs = _hub.NowUs();
+            generation.AcceptOutput(input =>
+            {
+                // Count before waiting for push confirmation or the ordered turn.
+                _ = QueueHevcSendAsync(async () =>
+                {
+                    long? timestamp = await HevcGeneration.MatchedTimestampAsync(input, outputUs);
+                    if (timestamp.HasValue)
+                        _stageDiagnostics.Sample(SinkStageDiagnostics.Stage.TimestampToOutput, timestamp.Value, outputUs);
+                    else
+                        _stageDiagnostics.MissingTimestamp();
+                    // Zero explicitly means no measured timestamp; never invent a capture time.
+                    await SendHevcPacketAsync(nalBytes, isKeyframe, timestamp ?? 0);
+                }, outputUs);
+            });
         },
-        (codecString, hvcC) =>
+        (codecString, hvcC) => generation.AcceptDescription(() =>
         {
-            // One-shot hvcC description for Safari's WebCodecs — must arrive before the first chunk
-            _descSendTask = SendHvcCDescriptionAsync(codecString, hvcC);
-        });
+            // Same ordered tail as packets: old accepted AUs, new description, new AUs.
+            _ = QueueHevcSendAsync(() => SendHvcCDescriptionAsync(codecString, hvcC));
+        }));
 
         if (!encoder.Initialize(width, height, bitrate, framerate, depth))
         {
+            generation.Retire();
             encoder.Shutdown();
             return null;
         }
+        _hevcGeneration = generation;
         return encoder;
+    }
+
+    // Caller holds _encoderLock. Close callback admission BEFORE shutdown (timer/read callbacks
+    // can survive Shutdown). Already admitted sends retain their place on the ordered tail.
+    private void RetireHevcEncoder()
+    {
+        _hevcGeneration?.Retire();
+        _hevcGeneration = null;
+        _hevcEncoder?.Shutdown();
+        _hevcEncoder = null;
+        _encoderWidth = _encoderHeight = _encoderBitrate = _encoderFramerate = _encoderDepth = 0;
     }
 
     /// <summary>
@@ -907,13 +997,12 @@ public sealed class ClientFrameSink : IDisposable
     {
         lock (_encoderLock)
         {
+            if (Volatile.Read(ref _disposed) != 0) return null;
             if (_hevcEncoder != null && _encoderWidth == width && _encoderHeight == height && _encoderBitrate == bitrate && _encoderFramerate == framerate && _encoderDepth == depth)
                 return _hevcEncoder;
 
-            _hevcEncoder?.Shutdown();
-            _hevcEncoder = null;
-            _descSendTask = null;
-            Volatile.Write(ref _hevcSendTask, null);
+            // Pending sends belong to the sink; keep their ordered tail across restarts.
+            RetireHevcEncoder();
 
             var encoder = CreateHevcEncoder(width, height, bitrate, framerate, depth);
             if (encoder == null) return null;
@@ -951,7 +1040,19 @@ public sealed class ClientFrameSink : IDisposable
 
         _ = Task.Run(() =>
         {
-            try { EnsureHevcEncoder(w, h, bitrate, fps, depth); }
+            try
+            {
+                lock (_encoderLock)
+                {
+                    // A compose that raced this warmup may have already built (or started
+                    // building) the encoder at the compose's real geometry — including the
+                    // adaptive half-res size. Recreating at target geometry here would kill
+                    // it and cost a spawn + IDR on the first frames (observed as full/half
+                    // size encoder pairs starting within seconds of each other).
+                    if (_hevcEncoder != null || _hasComposedOnce) return;
+                    EnsureHevcEncoder(w, h, bitrate, fps, depth);
+                }
+            }
             catch { }
         });
     }
@@ -1007,11 +1108,7 @@ public sealed class ClientFrameSink : IDisposable
             _hevcRestartRequested = false;
             lock (_encoderLock)
             {
-                _descSendTask = null;
-                Volatile.Write(ref _hevcSendTask, null);
-                _hevcEncoder?.Shutdown();
-                _hevcEncoder = null;
-                _encoderWidth = _encoderHeight = _encoderBitrate = _encoderFramerate = _encoderDepth = 0;
+                RetireHevcEncoder();
             }
             Console.WriteLine($"[Sink] {DeviceName}: HEVC encoder restarted for clean IDR");
         }
@@ -1094,30 +1191,49 @@ public sealed class ClientFrameSink : IDisposable
             bitmap.UnlockBits(bmpData);
         }
 
-        // Pipelined backpressure. Allow exactly 1 packet in flight on the network wire so
-        // hardware encode and network transmission pipeline concurrently. If network
-        // transmission falls behind (>= 2 packets queued/in-flight), pause here to keep _busy
-        // set so the producer drops old frames instead of accumulating latency.
-        if (Volatile.Read(ref _hevcSendsInFlight) >= 2)
-        {
-            var priorSend = Volatile.Read(ref _hevcSendTask);
-            if (priorSend is { IsCompleted: false })
-                await priorSend.WaitAsync(token);
-        }
+        // Pause raw-frame input at >= 2 outstanding AUs, including paced/ordered waiters.
+        // Keep _busy set so only unencoded capture frames are skipped. Already-buffered
+        // encoder output may exceed this watermark and must drain without packet drops.
+        await WaitForHevcSendCapacityAsync(token);
 
-        _hevcTimestamps.Enqueue(_timestampUs);
-        bool pushed = activeEncoder.PushRawFrame(_rawBuffer);
+        bool pushed = false;
+        lock (_encoderLock)
+        {
+            // Warmup/disposal may have retired the instance while raw capacity was awaited.
+            if (!ReferenceEquals(activeEncoder, _hevcEncoder) || _hevcGeneration == null) return false;
+            var generation = _hevcGeneration;
+            long pushStartUs = _hub.NowUs();
+            var input = generation.BeginPush(_timestampUs, pushStartUs);
+            if (input != null)
+            {
+                try
+                {
+                    // For the encoder's ffmpeg-internal latency metric (push → first VCL).
+                    // Stamped in the ENCODER's clock epoch — the hub clock starts at hub
+                    // construction while the encoder reads Stopwatch.GetTimestamp (uptime),
+                    // and mixing the two reads as a >10s delta that the guard rejects.
+                    Volatile.Write(ref activeEncoder.PendingPushStartUs, OpenWinSidecar.Service.Encoders.HevcStreamEncoder.NowUs());
+                    pushed = activeEncoder.PushRawFrame(_rawBuffer);
+                }
+                catch { pushed = false; }
+                finally
+                {
+                    generation.CompletePush(input, pushed);
+                    _stageDiagnostics.Sample(SinkStageDiagnostics.Stage.RawPush, pushStartUs, _hub.NowUs());
+                    if (pushed) _lastHevcFeedTicks = Environment.TickCount64;
+                }
+            }
+            // Capacity exhaustion also retires rather than shifting the timestamp FIFO.
+            if (!pushed)
+            {
+                _stageDiagnostics.PushFailed();
+                RetireHevcEncoder();
+            }
+        }
+        LogStageDiagnostics();
         if (!pushed)
         {
-            Console.WriteLine($"[Sink] {DeviceName}: HEVC frame push failed (ffmpeg died) — resetting encoder for retry in 2s");
-            lock (_encoderLock)
-            {
-                _descSendTask = null;
-                Volatile.Write(ref _hevcSendTask, null);
-                _hevcEncoder?.Shutdown();
-                _hevcEncoder = null;
-                _encoderWidth = _encoderHeight = _encoderBitrate = _encoderFramerate = _encoderDepth = 0;
-            }
+            Console.WriteLine($"[Sink] {DeviceName}: HEVC input failed or timestamp capacity exhausted — encoder retired, retry in 2s");
             _nextHevcAttemptUtc = DateTime.UtcNow.AddSeconds(2);
             _hevcRetryPending = true;
             return false;
@@ -1128,14 +1244,79 @@ public sealed class ClientFrameSink : IDisposable
     private readonly object _paceLock = new();
     private long _nextSendSlotUs; // pacing grid: AUs go out on an even cadence, not as-they-complete
 
+    // Publish the count and ordered tail together so backpressure never sees a counted
+    // waiter without a task to await. The delegate includes pacing, description and wire
+    // waits. Kept internal so tests can gate those stages without clocks or an encoder.
+    internal Task QueueHevcSendAsync(Func<Task> sendAsync, long? outputUs = null)
+    {
+        lock (_paceLock)
+        {
+            _stageDiagnostics.Pending(Interlocked.Increment(ref _hevcSendsInFlight));
+            return _hevcSendTask = RunOrderedHevcSendAsync(
+                _hevcSendTask ?? Task.CompletedTask, sendAsync, outputUs);
+        }
+    }
+
+    private async Task RunOrderedHevcSendAsync(Task priorSend, Func<Task> sendAsync, long? outputUs)
+    {
+        try
+        {
+            await priorSend.ConfigureAwait(false);
+            if (outputUs.HasValue)
+                _stageDiagnostics.Sample(SinkStageDiagnostics.Stage.OrderedWait, outputUs.Value, _hub.NowUs());
+            await sendAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Preserve existing send-error reporting, including failures before the wire wait.
+            if (Interlocked.Increment(ref _hevcSendErrorCount) <= 3)
+                Console.WriteLine($"[Sink] {DeviceName}: HEVC packet send failed ({ex.GetType().Name}): {ex.Message}");
+        }
+        finally
+        {
+            lock (_paceLock)
+                _stageDiagnostics.Pending(Interlocked.Decrement(ref _hevcSendsInFlight));
+            LogStageDiagnostics();
+        }
+    }
+
+    private void LogStageDiagnostics()
+    {
+        // The stage window only releases on its 5s boundary; gate the parser line on the
+        // same condition so it flushes once per window, not once per access unit (which
+        // flooded the log at frame rate — 97% of the file).
+        var line = _stageDiagnostics.Flush(_hub.NowUs(), DeviceName);
+        if (line == null) return;
+        Console.WriteLine(line);
+        var parserLine = _hevcEncoder?.FlushParserDiagnostics();
+        if (parserLine != null) Console.WriteLine(parserLine);
+    }
+
+    internal int HevcSendsInFlight => Volatile.Read(ref _hevcSendsInFlight);
+
+    internal async Task WaitForHevcSendCapacityAsync(CancellationToken token)
+    {
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            Task priorSend;
+            lock (_paceLock)
+            {
+                if (_hevcSendsInFlight < 2) return;
+                priorSend = _hevcSendTask!;
+            }
+            // Cancel only the raw-frame producer's wait, never an encoded reference packet.
+            await priorSend.WaitAsync(token).ConfigureAwait(false);
+        }
+    }
+
     private async Task SendHevcPacketAsync(byte[] nalBytes, bool isKeyframe, long timestampUs)
     {
         // Paced send: QSV completes frames in bursts (keyframe + backlog flush together), and
         // bursty arrivals waste client vsyncs (two frames in one interval = one discarded, the
         // next interval starves). Releasing AUs on an even TargetFramerate cadence converts
-        // arrivals into paintings ~1:1. Late frames go immediately; only early ones wait, so
-        // this can only smooth, never stall, the stream. Runs before the in-flight count so
-        // pacer waits don't trip network backpressure.
+        // arrivals into paintings ~1:1. Late frames go immediately; only early ones wait.
+        // The ordered send wrapper counts this entire wait toward raw-input backpressure.
         long intervalUs = 1_000_000L / Math.Max(1, TargetFramerate);
         long delayUs;
         lock (_paceLock)
@@ -1150,42 +1331,29 @@ public sealed class ClientFrameSink : IDisposable
             else
             {
                 delayUs = 0;
+                // A send delayed past several slots (encoder stall, Wi-Fi hiccup, process
+                // freeze) must not bank that time and fire a burst of catch-up frames —
+                // that burst is exactly what wastes client vsyncs. Restart the grid at now.
                 _nextSendSlotUs = nowUs + intervalUs;
             }
         }
+        long paceStartUs = _hub.NowUs();
         if (delayUs > 0)
             await Task.Delay(TimeSpan.FromMicroseconds(delayUs), CancellationToken.None);
+        _stageDiagnostics.Sample(SinkStageDiagnostics.Stage.PacingWait, paceStartUs, _hub.NowUs());
 
-        Interlocked.Increment(ref _hevcSendsInFlight);
-        try
-        {
-            var dt = _descSendTask;
-            if (dt != null)
-            {
-                await dt;
-            }
-
-            // Oversized-frame log for stall correlation: any AU over ~100KB occupies the
-            // wire for 50ms+ at current bitrates and stalls everything behind it.
-            if (nalBytes.Length > 100_000)
-                Console.WriteLine($"[Sink] {DeviceName}: large AU {nalBytes.Length} bytes key={isKeyframe} at {DateTime.UtcNow:HH:mm:ss.fff}");
-
-            var packet = WebCodecsFraming.BuildPacket((byte)StreamCodec.HEVC, isKeyframe, timestampUs, 0, 0, false, nalBytes);
-            await _streamLock.WaitAsync(CancellationToken.None);
-            try { await WebCodecsFraming.SendWsBinaryFrameAsync(_stream, packet, CancellationToken.None); }
-            finally { _streamLock.Release(); }
-            _hevcBytesWindow += nalBytes.Length; // single-threaded consumer — no interlocking needed
-        }
-        catch (Exception ex)
-        {
-            // Surface the first few failures (a dead socket usually ends the session right after).
-            if (Interlocked.Increment(ref _hevcSendErrorCount) <= 3)
-                Console.WriteLine($"[Sink] {DeviceName}: HEVC packet send failed ({ex.GetType().Name}): {ex.Message}");
-        }
+        var packet = WebCodecsFraming.BuildPacket((byte)StreamCodec.HEVC, isKeyframe, timestampUs, 0, 0, false, nalBytes);
+        long lockStartUs = _hub.NowUs();
+        await _streamLock.WaitAsync(CancellationToken.None);
+        long writeStartUs = _hub.NowUs();
+        _stageDiagnostics.Sample(SinkStageDiagnostics.Stage.SocketLock, lockStartUs, writeStartUs);
+        try { await WebCodecsFraming.SendWsBinaryFrameAsync(_stream, packet, CancellationToken.None); }
         finally
         {
-            Interlocked.Decrement(ref _hevcSendsInFlight);
+            _streamLock.Release();
+            _stageDiagnostics.Sample(SinkStageDiagnostics.Stage.SocketWrite, writeStartUs, _hub.NowUs());
         }
+        _hevcBytesWindow += nalBytes.Length; // ordered sends — no interlocking between senders needed
     }
 
     private int _hevcSendErrorCount;
@@ -1349,8 +1517,7 @@ public sealed class ClientFrameSink : IDisposable
         _hub.UnregisterSink(this);
         lock (_encoderLock)
         {
-            _hevcEncoder?.Shutdown();
-            _hevcEncoder = null;
+            RetireHevcEncoder();
         }
         _composeGraphics?.Dispose();
         _composeGraphics = null;
@@ -1360,6 +1527,16 @@ public sealed class ClientFrameSink : IDisposable
     }
 
     private int _disposed;
+
+    /// <summary>Sends a text message to this client over the WebSocket connection.</summary>
+    internal async Task SendTextAsync(string text, CancellationToken token = default)
+    {
+        try
+        {
+            await Protocol.WebCodecsFraming.SendTextAsync(_stream, _streamLock, text, token);
+        }
+        catch { }
+    }
 
     private static ImageCodecInfo GetJpegEncoder()
     {

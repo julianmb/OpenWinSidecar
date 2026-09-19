@@ -271,7 +271,7 @@
                             <TextBlock x:Name="TxtServiceState" Text="Stopped" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Bad}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
-                    <Button Content="🌐 Open Viewer" Click="BtnOpenBrowser_Click" Padding="7,3" FontSize="11" Margin="6,0,0,0"/>
+                    <Button Content="Preview on this PC" Click="BtnOpenBrowser_Click" Padding="7,3" FontSize="11" Margin="6,0,0,0"/>
                     <Button Content="🔄 Refresh" Click="BtnRefresh_Click" Padding="7,3" FontSize="11" Margin="4,0,0,0"/>
                 </StackPanel>
             </Grid>
@@ -371,6 +371,11 @@
                                 <Button Grid.Column="1" Content="Copy" Click="BtnCopyUrl_Click" Padding="7,2" FontSize="11" Margin="4,0,0,0"/>
                             </Grid>
                             <TextBlock Text="Scan QR or open URL. USB + Personal Hotspot = 0ms." FontSize="10" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap"/>
+                            <StackPanel x:Name="PnlAppleUsb" Orientation="Horizontal" Margin="0,4,0,0" Visibility="Collapsed">
+                                <Ellipse Width="6" Height="6" Margin="0,0,5,0" VerticalAlignment="Center" x:Name="EllipseAppleUsb"/>
+                                <TextBlock x:Name="TxtAppleUsb" FontSize="10" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                <Button x:Name="BtnInstallAppleDriver" Content="Install driver" Click="BtnInstallAppleDriver_Click" Padding="6,1" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" ToolTip="Opens the Microsoft Store page for Apple's free Apple Devices app, which installs the USB network driver."/>
+                            </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                 <Border x:Name="AccessBadgeShape" Width="6" Height="6" CornerRadius="3" Background="{StaticResource Bad}" Margin="0,0,5,0" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="TxtAccessBadge" Text="Open access" FontSize="10" Foreground="{StaticResource Bad}" VerticalAlignment="Center"/>
@@ -519,11 +524,77 @@
             <Grid Grid.Column="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Display Tuning (resolution + scale + advanced custom) -->
+                <!-- Stream Controls -->
                 <Border Grid.Row="0" Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Stream Controls" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TextTertiary}" Margin="0,0,0,6"/>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="68"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Display" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CmbStreamDisplay" Grid.Column="1" FontSize="11"/>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="68"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Stream FPS" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CmbStreamFps" Grid.Column="1" FontSize="11">
+                                <ComboBoxItem Content="30 fps" Tag="30"/>
+                                <ComboBoxItem Content="60 fps" Tag="60" IsSelected="True"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="68"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Quality" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CmbStreamQuality" Grid.Column="1" FontSize="11">
+                                <ComboBoxItem Content="50% (Low)" Tag="50"/>
+                                <ComboBoxItem Content="65% (Medium)" Tag="65"/>
+                                <ComboBoxItem Content="80% (Recommended)" Tag="80" IsSelected="True"/>
+                                <ComboBoxItem Content="90% (High)" Tag="90"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="68"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Codec" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CmbStreamCodec" Grid.Column="1" FontSize="11">
+                                <ComboBoxItem Content="HEVC (Recommended)" Tag="hevc" IsSelected="True"/>
+                                <ComboBoxItem Content="JPEG" Tag="jpeg"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="68"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Color depth" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CmbStreamColorDepth" Grid.Column="1" FontSize="11">
+                                <ComboBoxItem Content="8-bit" Tag="8" IsSelected="True"/>
+                                <ComboBoxItem Content="10-bit" Tag="10"/>
+                            </ComboBox>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Display Tuning (resolution + scale + advanced custom) -->
+                <Border Grid.Row="1" Style="{StaticResource Card}">
                     <StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -550,6 +621,17 @@
                             </ComboBox>
                         </Grid>
 
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="118"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="Magnification" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="CmbStreamZoom" Grid.Column="1" FontSize="11">
+                                <ComboBoxItem Content="1.0x — full desktop" Tag="1.0" IsSelected="True"/>
+                                <ComboBoxItem Content="1.25x" Tag="1.25"/>
+                                <ComboBoxItem Content="1.5x" Tag="1.5"/>
+                                <ComboBoxItem Content="1.75x" Tag="1.75"/>
+                                <ComboBoxItem Content="2.0x" Tag="2.0"/>
+                            </ComboBox>
+                        </Grid>
                         <Expander Style="{StaticResource SectionExpander}" Header="Custom resolution" Margin="0,7,0,0">
                             <Grid Margin="0,4,0,0">
                                 <Grid.ColumnDefinitions>
@@ -574,7 +656,7 @@
                 </Border>
 
                 <!-- Inline log preview (fills the column; full view via View logs) -->
-                <Border Grid.Row="1" Style="{StaticResource Card}" Padding="8,5" VerticalAlignment="Stretch">
+                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="8,5" VerticalAlignment="Stretch">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
