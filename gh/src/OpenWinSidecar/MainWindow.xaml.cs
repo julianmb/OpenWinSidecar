@@ -494,7 +494,6 @@ public partial class MainWindow : Window
         CmbNetworkEndpoints.SelectionChanged += CmbNetworkEndpoints_SelectionChanged;
 
         UpdateQrCode(TxtConnectUrl.Text);
-        UpdateAppleUsbHint();
 
         // Clients — live from the streaming engine (the legacy registry entries are unrelated).
         var clients = _streamingHost.IsRunning
@@ -527,50 +526,6 @@ public partial class MainWindow : Window
     }
 
     private readonly Queue<(double fps, double lat)> _sparklineHistory = new();
-
-    /// <summary>
-    /// Connection card hint for iPad-over-USB: green when the cable can carry the stream
-    /// (adapter present), an install offer when an iPad is attached but the Apple driver
-    /// is missing, and hidden when no Apple device is plugged in.
-    /// </summary>
-    private void UpdateAppleUsbHint()
-    {
-        var state = OpenWinSidecar.Core.Services.AppleUsbSupport.GetDriverState();
-        if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.NoDevice)
-        {
-            PnlAppleUsb.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        PnlAppleUsb.Visibility = Visibility.Visible;
-        if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.Ready)
-        {
-            var usbIp = _manager.NetworkEndpoints
-                .Where(e => e.Category.Contains("USB", StringComparison.Ordinal))
-                .Select(e => e.PrimaryIpAddress)
-                .FirstOrDefault();
-            EllipseAppleUsb.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Good");
-            TxtAppleUsb.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
-            TxtAppleUsb.Text = usbIp != null
-                ? $"iPad over USB ready — open http://{usbIp}:8080 on the iPad"
-                : "iPad over USB adapter present (no address yet — replug the cable)";
-            BtnInstallAppleDriver.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            EllipseAppleUsb.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Bad");
-            TxtAppleUsb.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
-            TxtAppleUsb.Text = "iPad detected over USB, but the network driver is missing — install Apple Devices to stream over the cable.";
-            BtnInstallAppleDriver.Visibility = Visibility.Visible;
-        }
-    }
-
-    private void BtnInstallAppleDriver_Click(object sender, RoutedEventArgs e)
-    {
-        OpenWinSidecar.Core.Services.AppleUsbSupport.OpenStorePage();
-        SetStatus("Opening the Microsoft Store — install the free Apple Devices app, then replug the iPad.");
-    }
-
 
     private void UpdateSparkline(double currentFps, double currentLat)
     {
@@ -1150,6 +1105,13 @@ public partial class MainWindow : Window
     /// </summary>
     private void AppendLog(string msg)
     {
+        // Filter out noisy HEVC and Hub diagnostics by default.
+        if (msg.StartsWith("[HEVC] parser stalls:") ||
+            msg.StartsWith("[HEVC] first-VCL seen with no pending push stamp") ||
+            msg.Contains("capture=") || msg.Contains("compose=") || msg.Contains("sinks="))
+        {
+            return;
+        }
         var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
         _logBuffer.Add(line);
         if (_logBuffer.Count > MaxLogBufferLines)
@@ -1317,7 +1279,6 @@ public partial class MainWindow : Window
     {
         var s = _manager.CurrentSettings;
         ChkAutoStart.IsChecked = s.ServerStartType == ServerStartMode.On;
-        ChkIosUsb.IsChecked = s.IosUsbControlEnabled;
         TxtPassword.Password = s.EncryptionPassword;
         UpdateAccessBadge(!string.IsNullOrWhiteSpace(s.EncryptionPassword));
     }
@@ -1347,7 +1308,6 @@ public partial class MainWindow : Window
         var s = new SidecarSettings
         {
             ServerStartType = ChkAutoStart.IsChecked == true ? ServerStartMode.On : ServerStartMode.Off,
-            IosUsbControlEnabled = ChkIosUsb.IsChecked == true,
             EncryptionPassword = TxtPassword.Password ?? string.Empty
         };
 

@@ -3,7 +3,7 @@
 Every change to this project is documented here: **what** was changed, **why**, and **how it was verified**. New entries go at the top. The commit history (`git log`) carries the same explanations per commit; this file is the human-readable narrative.
 
 ---
-## 2026-09-19 — 6-hour soak: flat 65ms latency, zero churn (30→60 FPS + keep-alive)
+## v0.2.0 (2026-09-19) — Latency halved (150ms → 65ms), desktop-owned controls, USB detection, stale-client fix
 
 - Monitor sampled the service log every minute for 6 hours (360 samples): glass-to-
   glass latency avg 65ms, p50 65ms, p95 69ms, max 76ms — flat for the entire window,

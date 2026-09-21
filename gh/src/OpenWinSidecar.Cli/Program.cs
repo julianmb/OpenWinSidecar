@@ -133,7 +133,6 @@ static async Task ShowStatusAsync(SidecarManager manager)
     Console.ResetColor();
 
     Console.WriteLine($"Server Auto-Start: {(manager.CurrentSettings.ServerStartType == ServerStartMode.On ? "ON" : "OFF")}");
-    Console.WriteLine($"iOS USB Support:   {(manager.CurrentSettings.IosUsbControlEnabled ? "Enabled" : "Disabled")}");
     Console.WriteLine($"Encryption:        {(string.IsNullOrEmpty(manager.CurrentSettings.EncryptionPassword) ? "Disabled" : "Protected")}");
     Console.WriteLine();
 
@@ -319,7 +318,6 @@ static async Task HandleConfigAsync(SidecarManager manager, string[] args)
         PrintHeader();
         Console.WriteLine("Current OpenWinSidecar Configuration:");
         Console.WriteLine($"  Server Start Mode:          {settings.ServerStartType}");
-        Console.WriteLine($"  iOS USB Control:            {(settings.IosUsbControlEnabled ? "Enabled" : "Disabled")}");
         Console.WriteLine($"  Encryption Password:        {settings.EncryptionPassword}");
         Console.WriteLine($"  VideoWall Disconnect Delay: {settings.VideoWallDisconnectDelay}s");
         return;
@@ -332,11 +330,6 @@ static async Task HandleConfigAsync(SidecarManager manager, string[] args)
         {
             var val = args[++i].ToLowerInvariant();
             settings.ServerStartType = (val == "on" || val == "1" || val == "true") ? ServerStartMode.On : ServerStartMode.Off;
-        }
-        else if (flag == "--ios-usb" && i + 1 < args.Length)
-        {
-            var val = args[++i].ToLowerInvariant();
-            settings.IosUsbControlEnabled = (val == "on" || val == "1" || val == "true");
         }
         else if (flag == "--password" && i + 1 < args.Length)
         {

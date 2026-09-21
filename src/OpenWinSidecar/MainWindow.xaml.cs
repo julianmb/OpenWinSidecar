@@ -494,7 +494,6 @@ public partial class MainWindow : Window
         CmbNetworkEndpoints.SelectionChanged += CmbNetworkEndpoints_SelectionChanged;
 
         UpdateQrCode(TxtConnectUrl.Text);
-        UpdateAppleUsbHint();
 
         // Clients — live from the streaming engine (the legacy registry entries are unrelated).
         var clients = _streamingHost.IsRunning
@@ -527,53 +526,6 @@ public partial class MainWindow : Window
     }
 
     private readonly Queue<(double fps, double lat)> _sparklineHistory = new();
-
-    /// <summary>
-    /// Connection card hint for iPad-over-USB: green when the cable can carry the stream
-    /// (adapter present), an install offer when an iPad is attached but the Apple driver
-    /// is missing, and hidden when no Apple device is plugged in.
-    /// </summary>
-    private void UpdateAppleUsbHint()
-    {
-        var state = OpenWinSidecar.Core.Services.AppleUsbSupport.GetDriverState();
-        
-        // Collapse the new banner and reset the hint text to default
-        UsbDriverBanner.Visibility = Visibility.Collapsed;
-        TxtUsbHint.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
-        TxtUsbHint.Text = "Scan QR or open URL. USB + Personal Hotspot = 0ms.";
-
-        if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.NoDevice)
-        {
-            return; // Use default hint text
-        }
-
-        if (state == OpenWinSidecar.Core.Services.AppleUsbDriverState.Ready)
-        {
-            var usbIp = _manager.NetworkEndpoints
-                .Where(e => e.Category.Contains("USB", StringComparison.Ordinal))
-                .Select(e => e.PrimaryIpAddress)
-                .FirstOrDefault();
-            
-            // Highlight the hint as good and show the direct URL
-            TxtUsbHint.SetResourceReference(TextBlock.ForegroundProperty, "Good");
-            TxtUsbHint.Text = usbIp != null
-                ? $"iPad over USB ready — open http://{usbIp}:8080 on the iPad (0ms latency)"
-                : "iPad over USB adapter present (no address yet — replug the cable)";
-        }
-        else // DriverMissing or other problem state
-        {
-            // Show the large banner and use generic hint text
-            UsbDriverBanner.Visibility = Visibility.Visible;
-            TxtUsbHint.Text = "Scan QR or open URL. Wired streaming requires the Apple Devices USB driver.";
-        }
-    }
-
-    private void BtnInstallAppleDriver_Click(object sender, RoutedEventArgs e)
-    {
-        OpenWinSidecar.Core.Services.AppleUsbSupport.OpenStorePage();
-        SetStatus("Opening the Microsoft Store — install the free Apple Devices app, then replug the iPad.");
-    }
-
 
     private void UpdateSparkline(double currentFps, double currentLat)
     {
@@ -1327,7 +1279,6 @@ public partial class MainWindow : Window
     {
         var s = _manager.CurrentSettings;
         ChkAutoStart.IsChecked = s.ServerStartType == ServerStartMode.On;
-        ChkIosUsb.IsChecked = s.IosUsbControlEnabled;
         TxtPassword.Password = s.EncryptionPassword;
         UpdateAccessBadge(!string.IsNullOrWhiteSpace(s.EncryptionPassword));
     }
@@ -1357,7 +1308,6 @@ public partial class MainWindow : Window
         var s = new SidecarSettings
         {
             ServerStartType = ChkAutoStart.IsChecked == true ? ServerStartMode.On : ServerStartMode.Off,
-            IosUsbControlEnabled = ChkIosUsb.IsChecked == true,
             EncryptionPassword = TxtPassword.Password ?? string.Empty
         };
 

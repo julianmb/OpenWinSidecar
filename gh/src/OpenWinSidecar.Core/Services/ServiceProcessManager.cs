@@ -73,10 +73,10 @@ public class ServiceProcessManager
             @"..\..\..\..\OpenWinSidecar.Service\bin\Release\net10.0-windows",
             @"..\..\..\..\OpenWinSidecar.Service\bin\Debug\net10.0-windows",
             @"..\..\..\..\OpenWinSidecar.Service\bin\Release\net10.0-windows",
-            @"..\..\..\..\gh\src\OpenWinSidecar.Service\bin\Debug\net10.0-windows",
-            @"..\..\..\..\gh\src\OpenWinSidecar.Service\bin\Release\net10.0-windows",
             @"..\..\..\..\src\OpenWinSidecar.Service\bin\Debug\net10.0-windows",
-            @"..\..\..\..\src\OpenWinSidecar.Service\bin\Release\net10.0-windows"
+            @"..\..\..\..\src\OpenWinSidecar.Service\bin\Release\net10.0-windows",
+            @"..\..\..\..\gh\src\OpenWinSidecar.Service\bin\Debug\net10.0-windows",
+            @"..\..\..\..\gh\src\OpenWinSidecar.Service\bin\Release\net10.0-windows"
         };
 
         // 1. Direct relative checks from BaseDirectory

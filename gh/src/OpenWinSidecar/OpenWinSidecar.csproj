@@ -24,7 +24,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- Product version. Keep in sync with #define MyAppVersion in installer/OpenWinSidecar.iss —
          the VersionConsistencyTests fail the build if they drift apart. -->
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
 </Project>

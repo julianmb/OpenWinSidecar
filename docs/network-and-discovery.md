@@ -29,12 +29,6 @@ Standard discovery packets across the local subnet:
 - Client connects directly to `http://<Host-IP>:8080` or `http://<Host-IP>:28252`.
 - Typical latency: 8–20ms.
 
-### B. Apple USB Tethering (iPad / iPhone)
-- Connect iPad via Lightning or USB-C cable.
-- Enable Personal Hotspot over USB on iPad.
-- Windows detects the Apple Mobile Device Ethernet adapter (`172.20.10.x` subnet).
-- Delivers a zero-jitter physical USB link.
-
-### C. Android ADB USB Reverse Tethering
+### B. Android ADB USB Reverse Tethering
 - Enabled via `adb.exe reverse tcp:28252 tcp:28252`.
 - Client opens `http://localhost:28252` in Chrome on Android with ~0ms network latency.
