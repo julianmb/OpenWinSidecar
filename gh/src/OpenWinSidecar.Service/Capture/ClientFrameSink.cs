@@ -736,7 +736,14 @@ public sealed class ClientFrameSink : IDisposable
             if (Codec == StreamCodec.HEVC)
             {
                 if (!await PushToHevcAsync(token))
+                {
+                    // JPEG fallback (no hardware encoder, or transient cooldown): the frame
+                    // still went out, so the keep-alive cadence must count it. Without this
+                    // stamp a machine with no encoder sees _lastHevcFeedTicks stay at 0 and
+                    // treats every static-desktop tick as keep-alive-due.
+                    _lastHevcFeedTicks = Environment.TickCount64;
                     await SendJpegAsync(token);
+                }
             }
             else
             {
