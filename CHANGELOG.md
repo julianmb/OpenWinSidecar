@@ -3,18 +3,43 @@
 Every change to this project is documented here: **what** was changed, **why**, and **how it was verified**. New entries go at the top. The commit history (`git log`) carries the same explanations per commit; this file is the human-readable narrative.
 
 ---
-## v0.2.0 (2026-09-19) — Latency halved (150ms → 65ms), desktop-owned controls, USB detection, stale-client fix
+## v0.2.0 (2026-09-21) — Desktop-owned stream controls, 65ms latency, dashboard redesign
 
-- Monitor sampled the service log every minute for 6 hours (360 samples): glass-to-
-  glass latency avg 65ms, p50 65ms, p95 69ms, max 76ms — flat for the entire window,
-  no drift, no spikes above 76ms. Receipt-to-paint on the viewer avg 15.7ms, max 19ms.
-- Zero encoder restarts after the initial start, zero decode errors, zero dropped
-  renders across the whole soak; the keep-alive, hysteresis, and warmup-guard fixes
-  held under real use. Log flood fix verified: sidecar.log stayed at 302 bytes idle.
-- receivedFps ranged 25–52 with motion (paint follows at rAF cadence); latency stayed
-  constant regardless, confirming the remaining budget is pacing + transit, not
-  encoder state.
-- Validation: passive observation only; no code changes in this entry.
+### Streaming & latency
+- Stream settings (display, FPS, quality, codec, color depth, zoom) moved from the
+  iPad viewer to the desktop dashboard; the viewer keeps only iPad-local controls.
+  Default is now 60 FPS across the stack.
+- Glass-to-glass latency halved: ~150 ms with spikes to 1.4 s → **65 ms flat**,
+  verified over a 6-hour soak (360 samples, avg 65 / p95 69 / max 76 ms, zero
+  encoder restarts, zero decode errors). Fixes: encoder keep-alive during idle
+  (prevents the 75–440 ms QSV wake-up stall), 3-second calm-upgrade hysteresis,
+  and the AU flush backstop cut from 33 ms to 8 ms.
+- Log flood fix: parser diagnostics flush per 5 s window instead of per frame.
+
+### Dashboard UI
+- Display status card distinguishes Driver disabled / Driver error / Not installed
+  from plain Off, each with the exact fix as the button label.
+- Stream controls split into Stream Encoding and Virtual Display groups; QR code
+  enlarged; maintenance section compressed to one collapsed row (redundant
+  Start/Stop service and Clean stale buttons removed — Turn on/off and the
+  automatic stale-client sweep cover them).
+- Copy button now flashes "Copied ✓"; noisy HEVC/Hub diagnostics hidden from the
+  inline log preview.
+
+### Robustness
+- Zombie clients no longer linger: input-loop exit cancels the session, a 60 s
+  stale-activity sweep evicts dead connections, and TCP keepalive (15s/5s) is set
+  on accepted sockets.
+
+### Maintenance
+- Repository slimmed from 68 MB to 1.1 MB: the 163 MB bundled VDD control
+  executable and a 68 MB zip were purged from git history (uninstaller never
+  shipped them; the installer already excluded both).
+- Orphaned Apple USB detection code removed (feature parked; the registry
+  setting round-trips untouched for older installs).
+
+Validation: 121 .NET tests, 2-hour soak on the release commit, silent-install
+smoke test in CI.
 
 ---
 
