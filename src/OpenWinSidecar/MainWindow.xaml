@@ -359,7 +359,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBox x:Name="TxtConnectUrl" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="11" VerticalAlignment="Center" Text="http://…"/>
-                                <Button Grid.Column="1" Content="Copy" Click="BtnCopyUrl_Click" Padding="7,2" FontSize="11" Margin="4,0,0,0"/>
+                                <Button x:Name="BtnCopyUrl" Grid.Column="1" Content="Copy" Click="BtnCopyUrl_Click" Padding="7,2" FontSize="11" Margin="4,0,0,0"/>
                             </Grid>
                             <TextBlock Text="Scan the QR code or open the URL on the iPad." FontSize="10" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,3,0,0"/>
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">

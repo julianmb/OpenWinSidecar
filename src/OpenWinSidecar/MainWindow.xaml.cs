@@ -1119,12 +1119,18 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BtnCopyUrl_Click(object sender, RoutedEventArgs e)
+    private async void BtnCopyUrl_Click(object sender, RoutedEventArgs e)
     {
         try
         {
             System.Windows.Clipboard.SetText(TxtConnectUrl.Text);
             SetStatus("Connection URL copied to clipboard.");
+
+            // Flash "Copied ✓" feedback
+            var originalContent = BtnCopyUrl.Content;
+            BtnCopyUrl.Content = "Copied ✓";
+            await Task.Delay(1500); // Wait 1.5 seconds
+            BtnCopyUrl.Content = originalContent;
         }
         catch { }
     }
