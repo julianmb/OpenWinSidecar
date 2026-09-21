@@ -858,34 +858,11 @@ public partial class MainWindow : Window
 
     // ----- Maintenance -----
 
-    private void BtnStartService_Click(object sender, RoutedEventArgs e)
-    {
-        _streamingHost.Start();
-        UpdateUi();
-        SetStatus("Streaming started (in-process).");
-    }
-
     private void BtnStartElevated_Click(object sender, RoutedEventArgs e)
     {
         var (started, message) = _manager.ProcessManager.StartElevated();
         UpdateUi();
         SetStatus(started ? "Service started elevated." : $"Could not start elevated: {message}");
-    }
-
-    private void BtnStopService_Click(object sender, RoutedEventArgs e)
-    {
-        _streamingHost.Stop();
-        _manager.ProcessManager.StopInteractive();
-        UpdateUi();
-        SetStatus("Streaming stopped.");
-    }
-
-    private void BtnCleanStale_Click(object sender, RoutedEventArgs e)
-    {
-        _streamingHost.Stop();
-        _manager.ProcessManager.KillAllStaleProcesses();
-        UpdateUi();
-        SetStatus("Stale processes cleaned.");
     }
 
     private void BtnRestartDriver_Click(object sender, RoutedEventArgs e)

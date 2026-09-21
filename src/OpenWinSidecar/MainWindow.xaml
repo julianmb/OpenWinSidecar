@@ -472,33 +472,21 @@
 
                 <!-- Advanced: maintenance + preferences in one visible section -->
                 <Border Grid.Row="5" Style="{StaticResource Card}">
-                    <Expander x:Name="AdvancedExpander" Style="{StaticResource SectionExpander}" Header="Advanced / maintenance" IsExpanded="True">
+                    <Expander x:Name="AdvancedExpander" Style="{StaticResource SectionExpander}" Header="Advanced / maintenance" IsExpanded="False">
                         <StackPanel Margin="0,3,0,0">
-                            <WrapPanel Margin="0,0,0,2">
+                            <WrapPanel Margin="0,0,0,4">
                                 <Button Content="Restart driver" Click="BtnRestartDriver_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
                                 <Button Content="Extend" Click="BtnForceExtend_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
                                 <Button Content="Mirror" Click="BtnForceMirror_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
-                                <Button Content="Start service" Click="BtnStartService_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
-                                <Button Content="Stop service" Click="BtnStopService_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
-                                <Button Content="Clean stale" Click="BtnCleanStale_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
                                 <Button Content="Restart as administrator" Click="BtnStartElevated_Click" Margin="0,0,3,3" Padding="7,2" FontSize="11"/>
                             </WrapPanel>
-                            <Separator Background="{StaticResource Separator}" Margin="0,0,0,4"/>
-                            <TextBlock Text="Preferences" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource TextTertiary}" Margin="0,0,0,4"/>
                             <WrapPanel Margin="0,0,0,3">
                                 <CheckBox x:Name="ChkAutoStart" Content="Start with Windows" FontSize="11" Foreground="{StaticResource TextPrimary}" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                 <CheckBox x:Name="ChkMinimizeToTray" Content="Minimize to tray" IsChecked="True" FontSize="11" Foreground="{StaticResource TextPrimary}" Margin="0,0,10,0" VerticalAlignment="Center"/>
-                            </WrapPanel>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
                                 <TextBlock Text="Password:" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                <PasswordBox x:Name="TxtPassword" Grid.Column="1" Height="24" VerticalAlignment="Center" Margin="0,0,5,0" FontSize="11" Background="{StaticResource FieldBg}" Foreground="{StaticResource TextPrimary}" BorderBrush="{StaticResource FieldBorder}" Padding="6,3"/>
-                                <Button x:Name="BtnSaveSettings" Grid.Column="2" Content="Save" Click="BtnSaveSettings_Click" Padding="10,2" FontSize="11"/>
-                            </Grid>
+                                <PasswordBox x:Name="TxtPassword" Height="24" VerticalAlignment="Center" Width="110" FontSize="11" Background="{StaticResource FieldBg}" Foreground="{StaticResource TextPrimary}" BorderBrush="{StaticResource FieldBorder}" Padding="6,3"/>
+                                <Button x:Name="BtnSaveSettings" Content="Save" Click="BtnSaveSettings_Click" Padding="10,2" FontSize="11" Margin="4,0,0,0"/>
+                            </WrapPanel>
                         </StackPanel>
                     </Expander>
                 </Border>
