@@ -25,3 +25,4 @@ drivers/VDD/control/VDD Control.pdb
 
 # ZCode session state
 .zcode/
+TestResults/
