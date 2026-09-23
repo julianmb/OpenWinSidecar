@@ -3,6 +3,36 @@
 Every change to this project is documented here: **what** was changed, **why**, and **how it was verified**. New entries go at the top. The commit history (`git log`) carries the same explanations per commit; this file is the human-readable narrative.
 
 ---
+## 2026-09-21 — v0.2.0 shipped; repository history cleaned (68 MB → 1.1 MB); CI unblocked
+
+- **v0.2.0 is live.** The Release workflow ran end-to-end green for the first
+  time since the automation landed: tests → publish → Inno installer → silent
+  install smoke test → GitHub Release (installer + SHA-256) → winget manifests
+  committed → winget-pkgs submission PR opened. Release:
+  https://github.com/julianmb/OpenWinSidecar/releases/tag/v0.2.0
+- **Repository slimmed from 68 MB to 1.1 MB.** `git filter-repo` purged the
+  163 MB bundled VDD control executable (and the 68 MB zip) from all history.
+  Neither was ever shipped by the installer. This is what unblocked every push
+  to GitHub — they had been failing on the 100 MB blob limit.
+- **Fixed a CI-only test failure** (`HevcKeepAlive_...`): on machines without
+  FFmpeg/GPU the HEVC push falls back to JPEG, and the keep-alive feed
+  timestamp was never stamped on that path — the frame went out either way.
+  The JPEG fallback now stamps the feed time. Green CI on the first run after.
+- **Restored CI-authored winget manifests.** The `winget/*.yaml` at repo root
+  are rewritten and pushed to main by the Release workflow itself; the
+  history-cleanup force-push had removed them, failing the next release at the
+  manifest step. Restored from the `gh/` mirror and re-tagged.
+- **Installed base updated.** The local machine upgraded 0.1.1 → 0.2.0 via the
+  released installer (silent install; one-time UAC approval — /SILENT skips
+  wizard dialogs, not elevation). Registry version, exe stamp, and firewall
+  rule all verified post-install.
+- **Documentation:** new `docs/release-operations.md` documents the tag→release
+  pipeline and the four operational lessons above (history rewrite recipe,
+  CI-authored files, hardware-dependent tests, silent-install UAC).
+- Validation: 117 .NET tests green locally and on CI; release workflow
+  completed/success (run 35590509982); installed exe reports 0.2.0.
+
+---
 ## v0.2.0 (2026-09-21) — Desktop-owned stream controls, 65ms latency, dashboard redesign
 
 ### Streaming & latency

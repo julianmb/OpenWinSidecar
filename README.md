@@ -49,7 +49,7 @@ OpenWinSidecar/
 │   ├── OpenWinSidecar.Service/       # High-performance Streaming Server & Capture Engine
 │   │   ├── Capture/DxgiCaptureService.cs       # Direct3D 11 Desktop Duplication GPU capture
 │   │   ├── Capture/ScreenCaptureService.cs     # GDI fallback & watermark compositor
-│   │   ├── Encoding/HevcQsvStreamEncoder.cs    # Intel Arc QSV HEVC hardware encoder
+│   │   ├── Encoding/HevcStreamEncoder.cs       # Vendor-abstracted HEVC encoder (Intel QSV / NVIDIA NVENC / AMD AMF via FFmpeg)
 │   │   ├── Input/InputDispatcher.cs            # Win32 SendInput mouse & keyboard dispatcher
 │   │   └── Protocol/SidecarTcpServer.cs        # Multi-port HTTP/WebSocket server & HTML5 client
 │   ├── OpenWinSidecar/               # WPF Management Dashboard & System Tray
@@ -82,13 +82,14 @@ dotnet build "src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj"
 
 ---
 
-## ⚙️ Quick Settings Reference (Web UI)
+## ⚙️ Stream Settings
 
-Tap the top-middle pill button (`🟢 60 FPS • ⚙️`) to open the settings modal:
-- **Video Codec:** `🚀 HEVC / H.265 (Intel Arc GPU Accelerated)` *(Default)* or `🖼️ Intra JPEG`
-- **Quality Preset:** `💎 80% Quality (High Detail - Default)` or `👑 90% Quality (Ultra Crisp)`
-- **Display Scale:** `100%`, `125%`, `150%`, `175% (Recommended for iPad)`, `200%`, `225%`
-- **Resolution:** `✨ Auto-Detect My Device Screen (Recommended)` or manual iPad models
+Stream settings live in the **Windows dashboard** (desktop app), which is
+authoritative: display target, stream FPS (30/60, default 60), quality, codec
+(HEVC or JPEG), color depth (8/10-bit), and magnification. The iPad viewer keeps
+only iPad-local controls (fullscreen, keyboard, cursor mode, aspect fit) and a
+settings modal with the AGPL source link. Dashboard changes reconnect viewers
+automatically.
 
 ---
 

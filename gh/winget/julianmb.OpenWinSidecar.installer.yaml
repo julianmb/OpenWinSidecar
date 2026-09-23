@@ -1,5 +1,5 @@
 PackageIdentifier: julianmb.OpenWinSidecar
-PackageVersion: 0.1.1
+PackageVersion: 0.2.0
 InstallerType: inno
 Scope: machine
 UpgradeBehavior: install
@@ -8,8 +8,8 @@ Dependencies:
   - PackageIdentifier: Gyan.FFmpeg
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/julianmb/OpenWinSidecar/releases/download/v0.1.1/OpenWinSidecar-Setup-0.1.1.exe
-  InstallerSha256: b2256a648c362c867fc2af9c8c64ef40840a644b27a35b8002040987a0c2a200
+  InstallerUrl: https://github.com/julianmb/OpenWinSidecar/releases/download/v0.2.0/OpenWinSidecar-Setup-0.2.0.exe
+  InstallerSha256: 2834b5bd0e705162c7608e77bba3c588c11c412f95d68a31c5473b2f36a41801
   InstallerSwitches:
     Silent: /SILENT
     SilentWithProgress: /SILENT
