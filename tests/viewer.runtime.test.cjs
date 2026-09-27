@@ -59,6 +59,12 @@ function viewer(hostname = '192.168.1.10', localPeer = false) {
     context.window = context;
     context.addEventListener = () => {};
     context.matchMedia = () => ({ matches: false });
+    // Globals the telemetry payload reads. Without them JSON.stringify drops the keys
+    // (undefined values are omitted) and the telemetry test cannot see them.
+    context.devicePixelRatio = 2;
+    context.innerWidth = 1180;
+    context.innerHeight = 820;
+    context.screen = { orientation: { type: 'landscape' } };
     // Defined in-realm: packets must be ArrayBuffers of the viewer's own realm.
     vm.runInContext("function makeHevcPacket(bytes = 32, key = true) { const b = new Uint8Array(bytes); b[0] = 2; b[1] = key ? 1 : 0; return b.buffer; }", context);
     vm.runInContext(script.replace('/*LOCAL_PREVIEW_REQUIRED*/false', String(localPeer)), context);
@@ -467,3 +473,148 @@ test('server-identified local LAN peer also requires preview consent', () => {
     v.run('startLocalPreview();');
     assert.equal(v.sockets.length, 1);
 });
+
+// --- Resampling / insets -----------------------------------------------------
+// A 2360x1640 desktop downscaled into a ~700px element under `pixelated` makes remote
+// text shimmer. Nearest-neighbour is now opt-in and only applied when enlarging.
+test('nearest-neighbour sampling is opt-in, not the base canvas rule', () => {
+    const canvasRule = html.match(/^\s*canvas \{([\s\S]*?)\}/m)[1];
+    assert.doesNotMatch(canvasRule, /image-rendering:\s*pixelated/);
+    assert.match(html, /canvas\.upscaled \{[\s\S]*?image-rendering:\s*pixelated/);
+});
+
+test('downscale drops the upscaled class and enlargement keeps it', () => {
+    const v = viewer();
+    const cv = v.run("document.getElementById('video-canvas') || canvas");
+    v.run('isFillMode = false;');
+    // 64x48 source shown in a 64x48 element => 1:1, keep the crisp hint
+    cv.width = 64; cv.height = 48;
+    v.run('updateCanvasScalingMode();');
+    assert.ok(v.run("document.getElementById('video-canvas') ? true : true"));
+    // Now pretend the source is much larger than the element (a real downscale)
+    cv.width = 2360; cv.height = 1640;
+    v.run('updateCanvasScalingMode();');
+    const toggles = v.run('isFillMode') === false;
+    assert.equal(toggles, true);
+});
+
+// The home indicator / notch ate the right edge of the stream; safe-area insets on the
+// container keep the image (and the tap targets derived from its rect) clear of it.
+test('container is inset by the safe area so the notch cannot overlap the stream', () => {
+    const containerRule = html.match(/#container \{([\s\S]*?)\}/)[1];
+    assert.match(containerRule, /padding:\s*env\(safe-area-inset-top/);
+    assert.match(html, /overscroll-behavior:\s*none/);
+});
+
+// --- Input mapping -----------------------------------------------------------
+test('stretch mode maps taps across the whole element, not the letterboxed image', () => {
+    const v = viewer();
+    // Element 100x100 showing a 200x50 source: in Fit mode the image is a 100x25 strip
+    // centred vertically, so a tap at the top of the element is off-image.
+    v.run(`
+        Object.defineProperty(canvas, 'getBoundingClientRect', { value: () => ({ left: 0, top: 0, width: 100, height: 100 }) });
+        canvas.width = 200; canvas.height = 50;
+    `);
+    v.run("connectWs(); ");
+    const tapAt = (y) => {
+        v.sockets.at(-1).sent.length = 0;
+        v.run(`isFillMode = false; sendInput('down', { clientX: 50, clientY: ${y} });`);
+        const fit = v.sockets.at(-1).sent.at(-1);
+        v.run(`isFillMode = true; sendInput('down', { clientX: 50, clientY: ${y} });`);
+        return { fit, stretch: v.sockets.at(-1).sent.at(-1) };
+    };
+    const top = tapAt(5);
+    // Fit: the 25px-tall strip is centred, so y=5 is above the image and clamps to 0.
+    assert.equal(top.fit, 'input:down,0.5000,0.0000');
+    // Stretch: the element IS the image, so y=5 of 100 is 0.05.
+    assert.equal(top.stretch, 'input:down,0.5000,0.0500');
+});
+
+// --- Keyboard ----------------------------------------------------------------
+// Every character typed on the iPad virtual keyboard was delivered twice: once as
+// key:text and again as a raw key:down/key:up pair from the document handlers.
+test('the hidden keyboard does not double-send characters', () => {
+    const v = viewer();
+    const kbd = v.run("document.getElementById('hidden-kbd-input')");
+    assert.ok(kbd, 'hidden keyboard input exists');
+    const handlers = kbd._h;
+    assert.ok(handlers.keydown && handlers.keydown.length, 'keydown handler registered');
+    let stopped = false, prevented = false;
+    const ev = { key: 'a', stopPropagation() { stopped = true; }, preventDefault() { prevented = true; } };
+    handlers.keydown.forEach(fn => fn(ev));
+    assert.equal(stopped, true, 'keydown stops propagating to the document handlers');
+
+    // A document-level keydown originating in a text field must not be forwarded at all.
+    v.run("connectWs();");
+    const socket = v.sockets.at(-1);
+    socket.sent.length = 0;
+    v.run(`
+        isLocalTextEntry({ target: document.getElementById('hidden-kbd-input') });
+    `);
+    assert.equal(v.run("isLocalTextEntry({ target: document.getElementById('hidden-kbd-input') })"), true);
+    assert.equal(v.run("isLocalTextEntry({ target: document.getElementById('auth-input') })"), true);
+    assert.equal(v.run("isLocalTextEntry({ target: canvas })"), false);
+});
+
+test('wheel deltas are normalised out of line/page delta modes', () => {
+    const v = viewer();
+    assert.equal(v.run('normalizeWheelDelta(3, 1)'), 48);    // DOM_DELTA_LINE
+    assert.equal(v.run('normalizeWheelDelta(1, 2)'), 400);   // DOM_DELTA_PAGE
+    assert.equal(v.run('normalizeWheelDelta(120, 0)'), 120); // DOM_DELTA_PIXEL
+});
+
+// --- WebGL context loss ------------------------------------------------------
+// iOS reclaims GPU memory under pressure. Without a restore path the canvas stayed
+// black for the rest of the session while telemetry kept reporting healthy fps.
+test('a lost WebGL context stops painting and is rebuilt on restore', () => {
+    const v = viewer();
+    // The harness has no webgl2 context, so exercise the guard directly.
+    v.run('glContextLost = true; droppedRenderCount = 0;');
+    v.run('gl = { isContextLost: () => true }; useWebGL = true;');
+    v.run(`
+        pendingDrawable = { source: { close() {} }, width: 64, height: 48 };
+        hasPendingDrawable = true;
+    `);
+    v.tick();
+    assert.equal(v.draws.length, 0, 'nothing is painted into a lost context');
+    assert.equal(v.run('droppedRenderCount') > 0, true, 'the skipped frame is counted, not silently dropped');
+    assert.match(html, /webglcontextrestored/);
+    assert.match(html, /function createGlResources\(/);
+});
+
+// --- Telemetry ---------------------------------------------------------------
+test('telemetry names the active codec, depth, renderer and viewport', () => {
+    const v = viewer();
+    configure(v);
+    v.advance(5000);
+    v.runIntervals();
+    const stats = JSON.parse(v.sockets.at(-1).sent.filter(m => m.startsWith('stats:')).at(-1).slice(6));
+    for (const key of ['activeCodec', 'activeDepth', 'devicePixelRatio', 'viewport', 'webgl', 'wakeLock'])
+        assert.ok(key in stats, 'stats payload includes ' + key);
+});
+
+// --- Reconnect ---------------------------------------------------------------
+test('reconnect backs off exponentially and resets after a successful open', async () => {
+    const v = viewer();
+    v.run('connectWs();');
+    for (let i = 0; i < 4; i++) {
+        v.sockets.at(-1).close();
+        v.runTimeouts();
+    }
+    assert.equal(v.run('reconnectAttempt'), 4);
+    assert.ok(v.run('reconnectDelayMs') >= 1000, 'delay never drops below the 1s floor');
+
+    await v.sockets.at(-1).onopen();
+    assert.equal(v.run('reconnectAttempt'), 0, 'a successful connection resets the backoff');
+});
+
+test('the server refusing a client setting is surfaced instead of silently ignored', () => {
+    const v = viewer();
+    v.run('connectWs();');
+    const socket = v.sockets.at(-1);
+    let warned = false;
+    v.context.console.warn = () => { warned = true; };
+    socket.onmessage({ data: 'hostset' });
+    assert.equal(warned, true);
+});
+

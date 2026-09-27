@@ -37,6 +37,11 @@ public class SidecarTcpServer : IDisposable
     private CancellationTokenSource? _cts;
     private readonly List<TcpClient> _activeClients = new();
 
+    /// <summary>Ceiling on simultaneously connected clients. Only one client can be streamed
+    /// at a time in practice (one physical GPU client per session), so this exists purely to
+    /// bound the cost of hostile or stalled connections.</summary>
+    private const int MaxConcurrentSessions = 16;
+
     private readonly object _settingsLock = new();
     private HostStreamSettings _settings;
 
@@ -71,6 +76,21 @@ public class SidecarTcpServer : IDisposable
             while (!token.IsCancellationRequested)
             {
                 var client = await listener.AcceptTcpClientAsync(token);
+
+                // Bounded concurrency. Every accepted socket costs a task, a 4-16 KB buffer
+                // and (during the handshake) a sink, so an unbounded accept loop is a
+                // resource-exhaustion target. Refuse politely past the cap rather than
+                // letting the host degrade.
+                lock (_activeClients)
+                {
+                    if (_activeClients.Count >= MaxConcurrentSessions)
+                    {
+                        client.Dispose();
+                        Console.WriteLine($"[TCP Server] Refused connection on port {port}: session cap ({MaxConcurrentSessions}) reached.");
+                        continue;
+                    }
+                }
+
                 client.NoDelay = true;
                 // Keep the kernel send buffer small so a slow Wi-Fi leg applies backpressure
                 // (producer drops frames — see ClientFrameSink _busy handoff) instead of
@@ -100,14 +120,15 @@ public class SidecarTcpServer : IDisposable
     {
         client.NoDelay = true;
         using var stream = client.GetStream();
-        var buffer = new byte[8192];
 
         try
         {
-            var readCount = await stream.ReadAsync(buffer, token);
-            if (readCount <= 0) return;
-
-            var requestText = Encoding.UTF8.GetString(buffer, 0, readCount);
+            // Read until the end of the request headers. A single ReadAsync is not enough:
+            // TCP segmentation routinely splits an HTTP request, and anything after the
+            // first segment (Sec-WebSocket-Key, Origin, even the path) would be silently
+            // treated as absent — which for Origin means "allowed".
+            var requestText = await ReadRequestHeadAsync(stream, token);
+            if (requestText == null) return;
 
             if (requestText.StartsWith("GET ") || requestText.StartsWith("POST "))
             {
@@ -127,10 +148,35 @@ public class SidecarTcpServer : IDisposable
                 }
                 else if (path == "/app" || path == "/app/" || path.StartsWith("/app?") || path.StartsWith("/app/"))
                 {
-                    await ServeIosAppLandingPageAsync(stream, token);
+                    // Only hand the download link the access token when this requester
+                    // already proved they hold it; otherwise leave the link bare (the zip
+                    // route will 403, which is the correct outcome for an anonymous visitor).
+                    var appAuth = GetRequiredAuthToken();
+                    var appToken = appAuth != null &&
+                                   (HttpHeaderMatchesToken(requestText, appAuth) || HttpQueryMatchesToken(path, appAuth))
+                        ? appAuth
+                        : string.Empty;
+                    await ServeIosAppLandingPageAsync(stream, token, appToken);
                 }
                 else if (path == "/ios-app.zip" || path == "/ios-app" || path == "/OpenWinSidecar.swiftpm.zip")
                 {
+                    // The iOS build is a real binary payload; serving it to any LAN host
+                    // (with Access-Control-Allow-Origin: *) hands it to any web page too.
+                    // Same token gate as /input.
+                    if (!IsOriginAllowed(requestText))
+                    {
+                        var forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                        await stream.WriteAsync(Encoding.UTF8.GetBytes(forbidden), token);
+                        return;
+                    }
+                    var zipAuth = GetRequiredAuthToken();
+                    if (zipAuth != null && !HttpHeaderMatchesToken(requestText, zipAuth) && !HttpQueryMatchesToken(path, zipAuth))
+                    {
+                        var forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                        await stream.WriteAsync(Encoding.UTF8.GetBytes(forbidden), token);
+                        return;
+                    }
+
                     await ServeIosAppZipAsync(stream, token);
                 }
                 else if (path == "/apple-touch-icon.png" || path == "/apple-touch-icon-precomposed.png" || path == "/favicon.ico")
@@ -210,6 +256,40 @@ public class SidecarTcpServer : IDisposable
             lock (_activeClients) { _activeClients.Remove(client); }
             client.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Reads an HTTP request head, accumulating segments until the blank line that ends the
+    /// header block. Returns null when the peer sends nothing, exceeds <see cref="MaxRequestHeadBytes"/>,
+    /// or stalls past the read deadline. Never returns a partial head: every caller (origin
+    /// check, WebSocket key, path routing) assumes a complete header block.
+    /// </summary>
+    private static async Task<string?> ReadRequestHeadAsync(NetworkStream stream, CancellationToken token)
+    {
+        const int MaxRequestHeadBytes = 16 * 1024;
+        var head = new StringBuilder();
+        var buffer = new byte[4096];
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            while (head.Length < MaxRequestHeadBytes)
+            {
+                int read = await stream.ReadAsync(buffer, deadline.Token);
+                if (read <= 0) return null;
+
+                head.Append(Encoding.UTF8.GetString(buffer, 0, read));
+                if (head.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
+                    return head.ToString();
+            }
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (IOException) { return null; }
+
+        Console.WriteLine("[TCP Server] Request head exceeded 16 KB without a terminator; dropping.");
+        return null;
     }
 
     private async Task HandleWebSocketConnectionAsync(TcpClient client, NetworkStream stream, string request, CancellationToken token)
@@ -331,10 +411,48 @@ public class SidecarTcpServer : IDisposable
         // The full input-message chain, extracted so both the auth gate and the stream
         // loop can route complete messages through it (each coalesced frame handled once).
         DateTime lastStatsLog = DateTime.MinValue;
+
+        // Input rate limiting. A pointer stream is ~60 msgs/s and typing is far below that;
+        // anything past this budget is a client in a send loop (key:text alone costs two
+        // SendInput syscalls per character, so an unbounded 16 KB message is ~32k calls).
+        // Over-budget messages are dropped, never queued.
+        const double InputBudgetPerSecond = 400.0;
+        const double InputBurstCapacity = 200.0;
+        double inputTokens = InputBurstCapacity;
+        long inputLastRefillTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        // Longest accepted key:text payload. Anything longer is a paste/broadcast, not typing.
+        const int MaxKeyTextChars = 256;
+
         void HandleClientMessage(string text)
         {
             if (string.IsNullOrEmpty(text)) return;
-            if (IsHostSettingCommand(text)) return;
+
+            // The desktop app is the sole authority for display topology, resolution, refresh
+            // rate, quality and zoom (v0.2.0 moved these off the viewer). A client asking for
+            // one of them gets an explicit refusal rather than being silently ignored, so it
+            // can grey out the control instead of leaving a dead button on screen.
+            if (IsHostSettingCommand(text))
+            {
+                _ = WebCodecsFraming.SendTextAsync(stream, streamLock, "hostset", sessionToken);
+                return;
+            }
+
+            // Rate-limit the input-injecting messages (everything below that reaches
+            // InputDispatcher). Cheap, non-injecting control messages stay unthrottled.
+            if (text.StartsWith("input:") || text.StartsWith("key:") || text.StartsWith("scroll:") || text == "rightclick")
+            {
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                double elapsed = (now - inputLastRefillTicks) / (double)System.Diagnostics.Stopwatch.Frequency;
+                inputLastRefillTicks = now;
+                inputTokens = Math.Min(InputBurstCapacity, inputTokens + elapsed * InputBudgetPerSecond);
+                if (inputTokens < 1.0) return;
+                inputTokens -= 1.0;
+
+                if (text.StartsWith("key:text,") && text.Length - 9 > MaxKeyTextChars)
+                    return;
+            }
+
             {
                         if (text.StartsWith("codec:"))
                         {
@@ -385,77 +503,6 @@ public class SidecarTcpServer : IDisposable
                         {
                             var cMode = text.Substring(7).ToLowerInvariant();
                             sink.ShowHostCursor = (cMode == "host" || cMode == "show_host");
-                        }
-                        else if (text.StartsWith("display:"))
-                        {
-                            if (int.TryParse(text.Substring(8), out var d))
-                            {
-                                var current = Screen.AllScreens;
-                                if (d >= 0 && d < current.Length)
-                                {
-                                    selectedDisplay = d;
-                                    sink.DeviceName = current[d].DeviceName;
-                                    _hub.EnsureProducer(sink.DeviceName);
-                                }
-                                else
-                                {
-                                    Console.WriteLine($"[WebSocket] Ignoring invalid display index {d} (have {current.Length}).");
-                                }
-                            }
-                        }
-                        else if (text.StartsWith("quality:"))
-                        {
-                            if (long.TryParse(text.Substring(8), out var q)) sink.Quality = (int)Math.Clamp(q, 10, 95);
-                        }
-                        else if (text.StartsWith("fps:"))
-                        {
-                            TrySetStreamFramerate(sink, text);
-                        }
-                        else if (text.StartsWith("mode:extend"))
-                        {
-                            VirtualDisplayManager.EnableExtendMode();
-                        }
-                        else if (text.StartsWith("mode:mirror"))
-                        {
-                            VirtualDisplayManager.EnableMirrorMode();
-                        }
-                        else if (text.StartsWith("set_res:"))
-                        {
-                            var parts = text.Substring(8).Split(',');
-                            if (parts.Length >= 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
-                            {
-                                int requestedHz = 60;
-                                if (parts.Length >= 3 && int.TryParse(parts[2], out var parsedHz)) requestedHz = parsedHz;
-                                if (requestedHz <= 0) requestedHz = 60;
-
-                                sink.TargetWidth = w;
-                                sink.TargetHeight = h;
-                                // Monitor refresh is independent of the per-client stream FPS.
-                                Console.WriteLine($"[Resolution] Target resolution set: {w}x{h}{(requestedHz > 0 ? $" @ {requestedHz}Hz" : "")}");
-
-                                // Aspect-match the virtual display to the client's screen so the
-                                // stream fills it edge-to-edge (idempotent — skips when matched)
-                                var applied = DisplayResolutionManager.MatchVirtualDisplayToClient(w, h, requestedHz);
-                                if (applied != null)
-                                {
-                                    Console.WriteLine($"[Resolution] Virtual display mode: {applied.Width}x{applied.Height} @ {applied.RefreshRate}Hz");
-                                }
-                            }
-                        }
-                        else if (text.StartsWith("dpi:"))
-                        {
-                            if (int.TryParse(text.Substring(4), out var dpiPercent))
-                            {
-                                WindowsDpiService.SetMonitorDpiPercent(selectedDisplay, dpiPercent);
-                            }
-                        }
-                        else if (text.StartsWith("zoom:"))
-                        {
-                            if (double.TryParse(text.Substring(5), System.Globalization.CultureInfo.InvariantCulture, out var z))
-                            {
-                                sink.Zoom = Math.Clamp(z, 1.0, 3.0);
-                                Console.WriteLine($"[Magnification] UI Zoom set to: {sink.Zoom:F2}x");
-                            }
                         }
                         else if (text.StartsWith("depth:"))
                         {
@@ -552,11 +599,13 @@ public class SidecarTcpServer : IDisposable
                 bool signaled = await sink.WaitFrameAsync(5000, sessionToken);
                 if (signaled)
                 {
-                    await sink.ProcessAndSendAsync(token);
+                    // The session token, not the server-lifetime token: a kick has to be able
+                    // to abort a send that is blocked on a dead/stalled peer.
+                    await sink.ProcessAndSendAsync(sessionToken);
                 }
                 else
                 {
-                    await WebCodecsFraming.SendPingAsync(stream, streamLock, token);
+                    await WebCodecsFraming.SendPingAsync(stream, streamLock, sessionToken);
                 }
             }
         }
@@ -795,23 +844,37 @@ public class SidecarTcpServer : IDisposable
         return false;
     }
 
+    private static byte[]? _cachedZipBytes;
+    private static readonly SemaphoreSlim _zipCacheLock = new(1, 1);
+
     private static async Task ServeIosAppZipAsync(NetworkStream stream, CancellationToken token)
     {
-        string? zipPath = null;
-        var candidates = new[]
+        // Resolve once and cache: the zip is immutable for the process lifetime, and reading
+        // it per request made N concurrent hits cost N copies resident.
+        if (_cachedZipBytes == null)
         {
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OpenWinSidecar.swiftpm.zip"),
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "ios", "OpenWinSidecar.swiftpm.zip"),
-            @"C:\Users\JulianB\source\repos\OpenWinSidecar\ios\OpenWinSidecar.swiftpm.zip"
-        };
-        foreach (var c in candidates)
-        {
-            if (File.Exists(c)) { zipPath = c; break; }
+            await _zipCacheLock.WaitAsync(token);
+            try
+            {
+                if (_cachedZipBytes == null)
+                {
+                    var candidates = new[]
+                    {
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OpenWinSidecar.swiftpm.zip"),
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "ios", "OpenWinSidecar.swiftpm.zip")
+                    };
+                    foreach (var c in candidates)
+                    {
+                        if (File.Exists(c)) { _cachedZipBytes = await File.ReadAllBytesAsync(c, token); break; }
+                    }
+                }
+            }
+            finally { _zipCacheLock.Release(); }
         }
 
-        if (zipPath != null && File.Exists(zipPath))
+        var zipBytes = _cachedZipBytes;
+        if (zipBytes != null && zipBytes.Length > 0)
         {
-            var zipBytes = await File.ReadAllBytesAsync(zipPath, token);
             var header = $"HTTP/1.1 200 OK\r\n" +
                          $"Content-Type: application/zip\r\n" +
                          $"Content-Disposition: attachment; filename=\"OpenWinSidecar.swiftpm.zip\"\r\n" +
@@ -900,7 +963,7 @@ public class SidecarTcpServer : IDisposable
         await stream.WriteAsync(bytes, token);
     }
 
-    private static async Task ServeIosAppLandingPageAsync(NetworkStream stream, CancellationToken token)
+    private static async Task ServeIosAppLandingPageAsync(NetworkStream stream, CancellationToken token, string downloadToken = "")
     {
         var html = @"<!DOCTYPE html>
 <html lang='en'>
@@ -1050,7 +1113,7 @@ public class SidecarTcpServer : IDisposable
             <span class='badge'>🍏 Zero Mac Required</span>
         </div>
 
-        <a href='/OpenWinSidecar.swiftpm.zip' download class='btn-download'>
+        <a href='/OpenWinSidecar.swiftpm.zip{DOWNLOAD_TOKEN}' download class='btn-download'>
             <span>📥</span><span>Download iPad App (.swiftpm)</span>
         </a>
 
@@ -1092,7 +1155,13 @@ public class SidecarTcpServer : IDisposable
 </body>
 </html>";
 
-        var bytes = Encoding.UTF8.GetBytes(html);
+        // The zip route is token-gated, so the download link has to carry the same token
+        // when a password is configured. Only ever substituted after the requester proved
+        // they hold it.
+        var query = string.IsNullOrEmpty(downloadToken)
+            ? string.Empty
+            : "?pw=" + Uri.EscapeDataString(downloadToken);
+        var bytes = Encoding.UTF8.GetBytes(html.Replace("{DOWNLOAD_TOKEN}", query));
         var header = $"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: {bytes.Length}\r\n\r\n";
         await stream.WriteAsync(Encoding.UTF8.GetBytes(header), token);
         await stream.WriteAsync(bytes, token);

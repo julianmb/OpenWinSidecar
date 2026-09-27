@@ -14,6 +14,12 @@ namespace OpenWinSidecar.Service.Protocol;
 /// </summary>
 internal sealed class WsTextMessageAssembler
 {
+    /// <summary>Hard ceiling on a single reassembled message. The 64 KB accumulator bounds
+    /// a single frame; fragmented messages accumulate separately and must be bounded too,
+    /// or a client sending endless FIN=0 continuation frames grows the list until the host
+    /// runs out of memory. Real control messages are a few hundred bytes.</summary>
+    internal const int MaxMessageBytes = 16 * 1024;
+
     private readonly byte[] _acc = new byte[64 * 1024];
     private int _accLen;
 
@@ -52,14 +58,23 @@ internal sealed class WsTextMessageAssembler
             else if (payloadLen == 127)
             {
                 if (_accLen - pos < 10) break;
-                payloadLen = (int)((long)_acc[pos + 2] << 56 | (long)_acc[pos + 3] << 48 |
-                                   (long)_acc[pos + 4] << 40 | (long)_acc[pos + 5] << 32 |
-                                   (long)_acc[pos + 6] << 24 | (long)_acc[pos + 7] << 16 |
-                                   (long)_acc[pos + 8] << 8  | _acc[pos + 9]);
+                // 64-bit length: only the low 32 bits are reachable by a single read, and a
+                // length with the high bit set wraps to a negative int, which would make
+                // frameEnd negative, pass the partial-frame guard and then allocate a
+                // negative-length array. Reject anything above the ceiling outright.
+                long wideLen = (long)_acc[pos + 2] << 56 | (long)_acc[pos + 3] << 48 |
+                               (long)_acc[pos + 4] << 40 | (long)_acc[pos + 5] << 32 |
+                               (long)_acc[pos + 6] << 24 | (long)_acc[pos + 7] << 16 |
+                               (long)_acc[pos + 8] << 8  | _acc[pos + 9];
+                if (wideLen < 0 || wideLen > MaxMessageBytes)
+                    throw new WsProtocolException($"oversized frame length ({wideLen})");
+                payloadLen = (int)wideLen;
                 headerLen = 10;
             }
 
             int maskLen = masked ? 4 : 0;
+            if (payloadLen > MaxMessageBytes)
+                throw new WsProtocolException($"frame payload {payloadLen} exceeds {MaxMessageBytes} bytes");
             int frameEnd = pos + headerLen + maskLen + payloadLen;
             if (frameEnd > _accLen) break; // partial frame — wait for more data
 
@@ -126,6 +141,9 @@ internal sealed class WsTextMessageAssembler
 
     private void AppendPayload(int pos, int headerLen, int maskLen, int payloadLen)
     {
+        if (_fragment.Count + payloadLen > MaxMessageBytes)
+            throw new WsProtocolException($"fragmented message exceeded {MaxMessageBytes} bytes");
+
         int dataStart = pos + headerLen + maskLen;
         for (int i = 0; i < payloadLen; i++)
         {
@@ -151,4 +169,14 @@ internal sealed class WsTextMessageAssembler
         }
         return Encoding.UTF8.GetString(decoded);
     }
+}
+
+/// <summary>
+/// Thrown when an inbound frame violates the size ceilings. The session is unrecoverable
+/// from here (the stream position is no longer trustworthy), so callers log and drop the
+/// connection rather than trying to resynchronise.
+/// </summary>
+internal sealed class WsProtocolException : Exception
+{
+    public WsProtocolException(string message) : base(message) { }
 }

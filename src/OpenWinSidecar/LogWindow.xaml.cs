@@ -17,7 +17,11 @@ public partial class LogWindow : Window
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.Invoke(() => Append(line));
+            // BeginInvoke, not Invoke: this is called from the streaming and capture threads
+            // for every server log line. Invoke blocks the producer until the UI thread
+            // drains its queue, so a busy log turned into head-of-line blocking on the
+            // capture path.
+            Dispatcher.BeginInvoke(() => Append(line));
             return;
         }
 
@@ -37,6 +41,30 @@ public partial class LogWindow : Window
     {
         if (!string.IsNullOrEmpty(TxtLog.Text))
             System.Windows.Clipboard.SetText(TxtLog.Text);
+    }
+
+    private void BtnSave_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                FileName = $"openwinsidecar-{DateTime.Now:yyyyMMdd-HHmmss}.log",
+                Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                DefaultExt = ".log",
+                Title = "Save log"
+            };
+            if (dlg.ShowDialog(this) != true) return;
+            // Write off the UI thread: a 500 KB document write is fast, but there is no
+            // reason to block the dispatcher for it.
+            var text = TxtLog.Text;
+            System.Threading.Tasks.Task.Run(() => System.IO.File.WriteAllText(dlg.FileName, text));
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(this, "Could not save the log:\n" + ex.Message,
+                "OpenWinSidecar", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void BtnClear_Click(object sender, RoutedEventArgs e) => TxtLog.Clear();

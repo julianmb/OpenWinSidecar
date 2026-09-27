@@ -31,10 +31,12 @@ public partial class MainWindow : Window
     private readonly string? _screenshotPath;
     private readonly bool _expandAllForScreenshot;
     private readonly bool _autoStartRequested;
+    private bool _refreshing;
 
     public MainWindow()
     {
         InitializeComponent();
+        FitToWorkArea();
         CenterOnPrimaryScreen();
         try
         {
@@ -76,20 +78,32 @@ public partial class MainWindow : Window
         // rendering roughly once per second, which the client feels as a periodic network gap.
         _streamingHost.OnLog += msg => Dispatcher.BeginInvoke(() => AppendLog(msg));
 
+        // These two fire from the capture and service-process threads, not the UI thread,
+        // and UpdateUi is a full rebuild. Invoke blocks the producer until the dispatcher
+        // drains, so the stream hiccups every time state changes.
         _streamingHost.OnRunningStateChanged += _ =>
         {
-            Dispatcher.Invoke(UpdateUi);
+            Dispatcher.BeginInvoke(UpdateUi);
         };
 
         _manager.ProcessManager.OnLogReceived += msg => Dispatcher.BeginInvoke(() => AppendLog(msg));
 
         _manager.ProcessManager.OnStatusChanged += () =>
         {
-            Dispatcher.Invoke(UpdateUi);
+            Dispatcher.BeginInvoke(UpdateUi);
         };
 
         _timer.Interval = TimeSpan.FromSeconds(3);
-        _timer.Tick += async (s, e) => await RefreshDataAsync();
+        // The tick is async and does real work (pnputil + network enumeration). Without a
+        // re-entrancy guard a slow tick overlaps the next one, and two concurrent
+        // RefreshDataAsync calls rebuild the same combo boxes and status cards at once.
+        _timer.Tick += async (s, e) =>
+        {
+            if (_refreshing) return;
+            _refreshing = true;
+            try { await RefreshDataAsync(); }
+            finally { _refreshing = false; }
+        };
 
         Loaded += async (s, e) =>
         {
@@ -255,10 +269,33 @@ public partial class MainWindow : Window
         base.OnSourceInitialized(e);
         try
         {
+            // Keep the window chrome intact, including maximize. The dashboard is a fixed
+            // 750-DIP design, and on a 1366x768 laptop at 125% scaling that is taller than
+            // the screen: with the maximize box stripped the Advanced section and the log
+            // preview were unreachable with no way to scroll or resize to them.
             var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-            int style = GetWindowLong(hwnd, GWL_STYLE);
-            SetWindowLong(hwnd, GWL_STYLE, style & ~WS_MAXIMIZEBOX & ~WS_MINIMIZEBOX);
             SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Clamps the requested window size to the usable work area. PrimaryScreenHeight
+    /// includes the taskbar, so centring against it pushed the bottom of the window
+    /// (Advanced expander, log preview) below the visible area on short screens.
+    /// </summary>
+    private void FitToWorkArea()
+    {
+        try
+        {
+            var area = SystemParameters.WorkArea;
+            if (double.IsNaN(area.Width) || double.IsNaN(area.Height) || area.Width <= 0 || area.Height <= 0)
+                return;
+
+            if (Width > area.Width - 20) Width = Math.Max(880, area.Width - 20);
+            if (Height > area.Height - 20) Height = Math.Max(560, area.Height - 20);
+            if (Left + Width > area.Left + area.Width) Left = area.Left + Math.Max(0, (area.Width - Width) / 2);
+            if (Top + Height > area.Top + area.Height) Top = area.Top;
         }
         catch { }
     }
@@ -267,12 +304,15 @@ public partial class MainWindow : Window
     {
         try
         {
-            double pW = SystemParameters.PrimaryScreenWidth;
-            double pH = SystemParameters.PrimaryScreenHeight;
+            // Work area, not the full screen: the taskbar eats ~48px at the bottom and the
+            // old maths positioned the window so its last ~200px sat under it.
+            var area = SystemParameters.WorkArea;
+            double pW = area.Width > 0 ? area.Width : SystemParameters.PrimaryScreenWidth;
+            double pH = area.Height > 0 ? area.Height : SystemParameters.PrimaryScreenHeight;
             double w = ActualWidth > 0 ? ActualWidth : (Width > 0 ? Width : 1020);
             double h = ActualHeight > 0 ? ActualHeight : (Height > 0 ? Height : 580);
-            Left = Math.Max(40, (pW - w) / 2);
-            Top = Math.Max(40, (pH - h) / 2);
+            Left = area.Left + Math.Max(0, (pW - w) / 2);
+            Top = area.Top + Math.Max(0, (pH - h) / 2);
         }
         catch { }
     }
@@ -453,10 +493,15 @@ public partial class MainWindow : Window
         {
             TxtDisplayState.Text = "Driver not installed";
             TxtDisplayState.SetResourceReference(TextBlock.ForegroundProperty, "Bad");
-            TxtDisplayDetail.Text = "The virtual display driver was not found — reinstall OpenWinSidecar";
-            BtnToggleDisplay.Content = "Turn on";
+            TxtDisplayDetail.Text = VirtualDisplayManager.IsElevated()
+                ? "Install the virtual display driver to continue"
+                : "Install the virtual display driver (administrator rights required)";
+            BtnToggleDisplay.Content = "Install driver";
             BtnToggleDisplay.Style = (Style)FindResource("PrimaryButton");
-            BtnToggleDisplay.IsEnabled = false;
+            // Enabled: this is the in-app recovery path for a missing driver. Disabling the
+            // only button on the card left the user with "reinstall the app" and no way to
+            // act on it from here.
+            BtnToggleDisplay.IsEnabled = true;
         }
         else
         {
@@ -520,8 +565,11 @@ public partial class MainWindow : Window
             : "—";
 
         // Performance Sparkline
-        double maxFps = clients.Count > 0 ? clients.Max(c => c.Fps) : 0;
-        double avgLat = clients.Count > 0 ? clients.Where(c => c.LatencyMs > 0).Select(c => (double)c.LatencyMs).DefaultIfEmpty(0).Average() : 0;
+        // Fed by the best *presenting* client, not clients.Max(Fps): a stalled client
+        // reports Fps 0, so the old input quietly decayed the line to a flat zero and
+        // looked like "performance dropped" rather than "a client stopped".
+        double maxFps = clients.Where(c => c.MetricsFresh).Select(c => (double)c.Fps).DefaultIfEmpty(0).Max();
+        double avgLat = clients.Where(c => c.MetricsFresh && c.LatencyMs > 0).Select(c => (double)c.LatencyMs).DefaultIfEmpty(0).Average();
         UpdateSparkline(maxFps, avgLat);
     }
 
@@ -675,6 +723,15 @@ public partial class MainWindow : Window
         if (btnLabel == "Restart driver")
         {
             BtnRestartDriver_Click(sender, e);
+            return;
+        }
+        // The driver is absent. The repair code has always existed (BtnInstallDriver_Click)
+        // but nothing on screen could reach it: the button was disabled and the card said
+        // "reinstall OpenWinSidecar", which is a dead end for a partial install, a portable
+        // launch, or a VM where the installer's devcon step was skipped.
+        if (btnLabel == "Install driver")
+        {
+            BtnInstallDriver_Click(sender, e);
             return;
         }
 

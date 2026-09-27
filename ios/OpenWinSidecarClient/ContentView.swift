@@ -324,19 +324,18 @@ struct SettingsSheet: View {
                     LabeledContent("Host", value: "\(viewModel.hostIp):\(viewModel.port)")
                 }
 
-                Section("Windows Display Scale") {
-                    Button("175% (Recommended for iPad 11\")") {
-                        viewModel.connection.sendText("dpi:175")
-                    }
-                    Button("150%") { viewModel.connection.sendText("dpi:150") }
-                    Button("200%") { viewModel.connection.sendText("dpi:200") }
-                }
-
-                Section("Quality") {
-                    Button("50% — fastest") { viewModel.connection.sendText("quality:50") }
-                    Button("65% — balanced") { viewModel.connection.sendText("quality:65") }
-                    Button("80% — high detail") { viewModel.connection.sendText("quality:80") }
-                    Button("90% — ultra crisp") { viewModel.connection.sendText("quality:90") }
+                Section("Display & Quality") {
+                    // These used to be buttons that sent `dpi:`, `quality:`, `fps:` and
+                    // friends. The desktop app became the sole authority for stream
+                    // settings (v0.2.0); the server refuses those messages and answers
+                    // `hostset`, so every one of these buttons was a silent no-op that
+                    // looked live. Change them on the desktop dashboard instead.
+                    Label("Controlled by the desktop app", systemImage: "desktopcomputer")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text("Display scale, resolution, frame rate, codec, colour depth and quality are set from the OpenWinSidecar dashboard on your PC. This app controls only what belongs to the iPad: fullscreen, keyboard and cursor mode.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Stream Control") {

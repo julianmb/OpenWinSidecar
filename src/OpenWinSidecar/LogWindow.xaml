@@ -53,6 +53,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <CheckBox x:Name="ChkAutoScroll" Content="Auto-scroll" IsChecked="True" FontSize="11" Foreground="#5C6270" VerticalAlignment="Center" Margin="0,0,10,0"/>
                     <Button Content="Copy" Click="BtnCopy_Click" Margin="0,0,5,0"/>
+                    <Button Content="Save log..." Click="BtnSave_Click" Margin="0,0,5,0"/>
                     <Button Content="Clear" Click="BtnClear_Click"/>
                 </StackPanel>
             </Grid>

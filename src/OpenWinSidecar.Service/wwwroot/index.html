@@ -18,6 +18,7 @@
             width: 100%; height: 100%;
             background: #000;
             overflow: hidden;
+            overscroll-behavior: none;
             touch-action: none;
             user-select: none;
             -webkit-user-select: none;
@@ -33,6 +34,11 @@
             align-items: center;
             justify-content: center;
             background: #000;
+            /* Keep the streamed image clear of the notch / home indicator. Because the canvas
+               is sized 100% of the content box, getBoundingClientRect() reflects the inset,
+               so the input mapping stays correct without extra arithmetic. */
+            padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+                     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
             transform: translateZ(0);
             -webkit-transform: translate3d(0, 0, 0);
             backface-visibility: hidden;
@@ -45,11 +51,18 @@
             height: 100%;
             object-fit: contain;
             cursor: none;
-            image-rendering: -webkit-optimize-contrast;
-            image-rendering: pixelated;
+            /* Smooth (bilinear) resampling is the default: a 2360x1640 desktop downscaled
+               into a ~700px element is nearest-neighbour sampled under `pixelated`, which
+               makes remote text crawl and shimmer. Nearest-neighbour is only correct when
+               the image is being enlarged 1:1 or beyond, so it is opt-in (see .upscaled). */
+            image-rendering: auto;
             transform: translateZ(0);
             -webkit-transform: translate3d(0, 0, 0);
             will-change: transform;
+        }
+        canvas.upscaled {
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: pixelated;
         }
         #pointer-dot {
             position: absolute;
@@ -523,6 +536,56 @@
         let gl = null, glTexture = null;
         let useWebGL = false;
 
+        function createGlResources(glc) {
+            const vsSrc = 'attribute vec2 aPos;attribute vec2 aUV;varying vec2 vUV;void main(){vUV=aUV;gl_Position=vec4(aPos,0.0,1.0);}';
+            const fsSrc = 'precision mediump float;varying vec2 vUV;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUV);}';
+
+            const vs = glc.createShader(glc.VERTEX_SHADER);
+            glc.shaderSource(vs, vsSrc);
+            glc.compileShader(vs);
+            if (!glc.getShaderParameter(vs, glc.COMPILE_STATUS)) return null;
+
+            const fs = glc.createShader(glc.FRAGMENT_SHADER);
+            glc.shaderSource(fs, fsSrc);
+            glc.compileShader(fs);
+            if (!glc.getShaderParameter(fs, glc.COMPILE_STATUS)) return null;
+
+            const prog = glc.createProgram();
+            glc.attachShader(prog, vs);
+            glc.attachShader(prog, fs);
+            glc.linkProgram(prog);
+            if (!glc.getProgramParameter(prog, glc.LINK_STATUS)) return null;
+            glc.useProgram(prog);
+
+            // Fullscreen quad with V-flipped UVs (frames are top-down; GL textures bottom-up).
+            const verts = new Float32Array([-1,-1, 0,1,  1,-1, 1,1,  -1,1, 0,0,  1,1, 1,0]);
+            const buf = glc.createBuffer();
+            glc.bindBuffer(glc.ARRAY_BUFFER, buf);
+            glc.bufferData(glc.ARRAY_BUFFER, verts, glc.STATIC_DRAW);
+
+            const aPos = glc.getAttribLocation(prog, 'aPos');
+            const aUV = glc.getAttribLocation(prog, 'aUV');
+            glc.enableVertexAttribArray(aPos);
+            glc.vertexAttribPointer(aPos, 2, glc.FLOAT, false, 16, 0);
+            glc.enableVertexAttribArray(aUV);
+            glc.vertexAttribPointer(aUV, 2, glc.FLOAT, false, 16, 8);
+
+            const tex = glc.createTexture();
+            glc.bindTexture(glc.TEXTURE_2D, tex);
+            glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_MIN_FILTER, glc.LINEAR);
+            glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_MAG_FILTER, glc.LINEAR);
+            glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_WRAP_S, glc.CLAMP_TO_EDGE);
+            glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_WRAP_T, glc.CLAMP_TO_EDGE);
+            glc.uniform1i(glc.getUniformLocation(prog, 'uTex'), 0);
+            return tex;
+        }
+
+        // iOS reclaims GPU memory under pressure and fires webglcontextlost. Without a
+        // restore path the canvas stays black for the rest of the session: every draw call
+        // against a lost context is a silent no-op, so decode/paint telemetry keeps
+        // reporting healthy fps over a dead display.
+        let glContextLost = false;
+
         function initWebGLRenderer() {
             try {
                 const glc = canvas.getContext('webgl2', {
@@ -536,50 +599,28 @@
                 });
                 if (!glc) return false;
 
-                const vsSrc = 'attribute vec2 aPos;attribute vec2 aUV;varying vec2 vUV;void main(){vUV=aUV;gl_Position=vec4(aPos,0.0,1.0);}';
-                const fsSrc = 'precision mediump float;varying vec2 vUV;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUV);}';
-
-                const vs = glc.createShader(glc.VERTEX_SHADER);
-                glc.shaderSource(vs, vsSrc);
-                glc.compileShader(vs);
-                if (!glc.getShaderParameter(vs, glc.COMPILE_STATUS)) return false;
-
-                const fs = glc.createShader(glc.FRAGMENT_SHADER);
-                glc.shaderSource(fs, fsSrc);
-                glc.compileShader(fs);
-                if (!glc.getShaderParameter(fs, glc.COMPILE_STATUS)) return false;
-
-                const prog = glc.createProgram();
-                glc.attachShader(prog, vs);
-                glc.attachShader(prog, fs);
-                glc.linkProgram(prog);
-                if (!glc.getProgramParameter(prog, glc.LINK_STATUS)) return false;
-                glc.useProgram(prog);
-
-                // Fullscreen quad with V-flipped UVs (frames are top-down; GL textures bottom-up).
-                const verts = new Float32Array([-1,-1, 0,1,  1,-1, 1,1,  -1,1, 0,0,  1,1, 1,0]);
-                const buf = glc.createBuffer();
-                glc.bindBuffer(glc.ARRAY_BUFFER, buf);
-                glc.bufferData(glc.ARRAY_BUFFER, verts, glc.STATIC_DRAW);
-
-                const aPos = glc.getAttribLocation(prog, 'aPos');
-                const aUV = glc.getAttribLocation(prog, 'aUV');
-                glc.enableVertexAttribArray(aPos);
-                glc.vertexAttribPointer(aPos, 2, glc.FLOAT, false, 16, 0);
-                glc.enableVertexAttribArray(aUV);
-                glc.vertexAttribPointer(aUV, 2, glc.FLOAT, false, 16, 8);
-
-                const tex = glc.createTexture();
-                glc.bindTexture(glc.TEXTURE_2D, tex);
-                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_MIN_FILTER, glc.LINEAR);
-                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_MAG_FILTER, glc.LINEAR);
-                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_WRAP_S, glc.CLAMP_TO_EDGE);
-                glc.texParameteri(glc.TEXTURE_2D, glc.TEXTURE_WRAP_T, glc.CLAMP_TO_EDGE);
-                glc.uniform1i(glc.getUniformLocation(prog, 'uTex'), 0);
+                const tex = createGlResources(glc);
+                if (!tex) return false;
 
                 gl = glc;
                 glTexture = tex;
-                canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); }, false);
+                canvas.addEventListener('webglcontextlost', (e) => {
+                    e.preventDefault(); // required for webglcontextrestored to fire
+                    glContextLost = true;
+                    console.warn('[Renderer] WebGL context lost — pausing paint until restored');
+                }, false);
+                canvas.addEventListener('webglcontextrestored', () => {
+                    try {
+                        const restoredTex = createGlResources(gl);
+                        if (restoredTex) {
+                            glTexture = restoredTex;
+                            glContextLost = false;
+                            console.log('[Renderer] WebGL context restored');
+                        }
+                    } catch (err) {
+                        console.warn('[Renderer] WebGL restore failed', err);
+                    }
+                }, false);
                 console.log('[Renderer] WebGL2 texture path active');
                 return true;
             } catch (e) {
@@ -600,6 +641,13 @@
 
         function paintDrawable(d) {
             if (useWebGL && gl) {
+                // A lost context accepts every call and draws nothing. Skip the frame so the
+                // canvas keeps its last good image instead of going black, and so the frame
+                // is not counted as a successful paint.
+                if (glContextLost || gl.isContextLost()) {
+                    droppedRenderCount++;
+                    return;
+                }
                 if (canvas.width !== d.width || canvas.height !== d.height) {
                     canvas.width = d.width;
                     canvas.height = d.height;
@@ -751,6 +799,8 @@
         let lastPaintAt = null;
         let lastLatencyAt = null;
         let reconnectTimer = null;
+let reconnectAttempt = 0;
+let reconnectDelayMs = 1000;
         const BACKGROUND_GRACE_MS = 3000;
         let backgroundTimer = null;
         let hiddenSince = null;
@@ -826,7 +876,11 @@
             const now = performance.now();
             if (!localPreviewApproved) fpsLabel.textContent = 'Preview not started';
             else if (document.hidden) fpsLabel.textContent = backgroundGraceActive() ? 'Tab hidden' : 'Paused — tab hidden';
-            else if (!ws || ws.readyState !== WebSocket.OPEN) fpsLabel.textContent = '⟳ reconnecting';
+            else if (!ws || ws.readyState !== WebSocket.OPEN) {
+                fpsLabel.textContent = reconnectAttempt > 1
+                    ? '⟳ retry ' + reconnectAttempt + ' in ' + Math.ceil(reconnectDelayMs / 1000) + 's'
+                    : '⟳ reconnecting';
+            }
             else if (lastPaintAt === null) fpsLabel.textContent = 'Waiting for frames';
             else if (now - lastPaintAt >= TELEMETRY_STALE_MS) {
                 fpsLabel.textContent = 'No recent frames · ' + Math.floor((now - lastPaintAt) / 1000) + 's ago';
@@ -1001,8 +1055,18 @@
             if (elapsed <= 0) return;
             latencyAvg = latencySamples > 0 ? latencySum / latencySamples : null;
             const stats5s = {
-                viewerVersion: '2026-09-17-desktop-controls',
+                viewerVersion: '2026-09-27-resilience',
                 visible: document.visibilityState === 'visible',
+                // Without these three, "it looked fine on my iPad" is undiagnosable: the
+                // active codec says whether the user is on HEVC or bandwidth-hungry JPEG,
+                // and dpr/viewport explain why their canvas is soft.
+                activeCodec: activeCodec,
+                activeDepth: activeDepth,
+                devicePixelRatio: window.devicePixelRatio,
+                viewport: window.innerWidth + 'x' + window.innerHeight,
+                orientation: (window.screen && window.screen.orientation ? window.screen.orientation.type : 'unknown'),
+                webgl: useWebGL && !glContextLost ? 'webgl2' : (useWebGL ? 'webgl2-lost' : 'canvas2d'),
+                wakeLock: wakeLock ? 'held' : 'none',
                 frameAgeMs: lastPaintAt === null ? null : Math.round(now - lastPaintAt),
                 fps: Math.round((statsWindowFrames * 1000) / elapsed),
                 receivedFps: Math.round((receivedWindowFrames * 1000) / elapsed),
@@ -1176,6 +1240,15 @@
                     const lock = await navigator.wakeLock.request('screen');
                     if (document.hidden || generation !== streamGeneration) { await lock.release(); return; }
                     wakeLock = lock;
+                    // iOS revokes the lock on system sleep, resource pressure, or when
+                    // another tab takes the screen — often without a visibilitychange.
+                    // Without this the iPad dims mid-session and never recovers until the
+                    // user leaves and comes back to the tab.
+                    lock.addEventListener('release', () => {
+                        wakeLock = null;
+                        console.warn('[WakeLock] Released by the system; re-acquiring');
+                        if (!document.hidden) requestWakeLock();
+                    });
                     console.log('[WakeLock] Screen WakeLock active');
                 }
             } catch (e) { }
@@ -1436,6 +1509,7 @@
             ws.onopen = async () => {
                 if (ws !== socket || document.hidden) return;
                 console.log('[OpenWinSidecar] Stream Connected');
+                reconnectAttempt = 0;
                 requestWakeLock();
                 sendSync();
 
@@ -1506,6 +1580,12 @@
                     if (e.data === 'codec:intra') {
                         activeCodec = 'intra';
                     }
+                    // The desktop app owns display/quality/fps/zoom. The server refuses
+                    // client-side changes, so the control that sent one is dead — say so
+                    // instead of leaving a button that silently does nothing.
+                    if (e.data === 'hostset') {
+                        console.warn('[Settings] Ignored: stream settings are controlled by the desktop app');
+                    }
                     return;
                 }
                 if (e.data instanceof ArrayBuffer) {
@@ -1516,7 +1596,18 @@
             ws.onclose = () => {
                 if (ws !== socket) return;
                 suspendStream();
-                if (!document.hidden) reconnectTimer = setTimeout(connectWs, 1000);
+                if (document.hidden) { reconnectAttempt = 0; return; }
+                // Exponential backoff with jitter. A fixed 1s retry hammers the host
+                // forever when it is closed or the PC is asleep, and every iPad on the
+                // network does it in lockstep.
+                reconnectAttempt++;
+                const base = Math.min(30000, 1000 * Math.pow(2, Math.min(reconnectAttempt, 5) - 1));
+                const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+                if (reconnectAttempt > 3) {
+                    console.warn('[Reconnect] Cannot reach host — attempt ' + reconnectAttempt + ', retrying in ' + Math.round(delay / 1000) + 's');
+                }
+                reconnectDelayMs = delay;
+                reconnectTimer = setTimeout(connectWs, delay);
             };
         }
 
@@ -1549,7 +1640,12 @@
 
             const elemW = rect.width, elemH = rect.height;
             const contentW = canvas.width || 1180, contentH = canvas.height || 820;
-            if (contentW > 0 && contentH > 0 && elemW > 0 && elemH > 0) {
+            // In Stretch mode the canvas is drawn edge-to-edge (object-fit: fill), so the
+            // whole element box is the image. Applying the letterbox insets here would
+            // offset every tap by the size of a bar that is not on screen — the classic
+            // "I tapped the button and a different app opened" symptom.
+            const letterboxed = !isFillMode && contentW > 0 && contentH > 0 && elemW > 0 && elemH > 0;
+            if (letterboxed) {
                 const elemAspect = elemW / elemH;
                 const contentAspect = contentW / contentH;
                 if (elemAspect > contentAspect) {
@@ -1659,10 +1755,21 @@
 
         // --- Mouse wheel (desktop browser; canvas only so scrolling the settings modal
         // doesn't scroll Windows behind it) ---
+        // Wheel deltas arrive in three different units. Firefox and older WebKit report
+        // DOM_DELTA_LINE (typically 3 per notch), so passing deltaY straight through made
+        // scrolling feel almost dead on those browsers. Normalise to something close to
+        // pixels-per-notch before forwarding.
+        function normalizeWheelDelta(raw, mode) {
+            if (mode === 1) return raw * 16;   // DOM_DELTA_LINE
+            if (mode === 2) return raw * 400;  // DOM_DELTA_PAGE
+            return raw;                         // DOM_DELTA_PIXEL
+        }
+
         container.addEventListener('wheel', (e) => {
             if (e.target !== canvas) return;
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send('scroll:' + Math.round(-e.deltaY));
+                const dy = normalizeWheelDelta(e.deltaY, e.deltaMode);
+                ws.send('scroll:' + Math.round(-dy));
             }
             e.preventDefault();
         }, { passive: false });
@@ -1693,8 +1800,18 @@
             return e.keyCode; // legacy fallback
         }
 
+        // The hidden keyboard input and the password field own their own keystrokes. Without
+        // this guard the document handlers below also fire for them, so every character the
+        // user types on the iPad virtual keyboard is sent twice — once as key:text and once
+        // as a raw key:down/key:up pair — and Windows types it twice.
+        function isLocalTextEntry(e) {
+            const t = e.target;
+            return !!t && (t === hiddenKbd || t === authInput || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+        }
+
         document.addEventListener('keydown', (e) => {
             if (!authenticated) return; // don't forward keystrokes while the password prompt is up
+            if (isLocalTextEntry(e)) return;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send('key:down,' + eventToVk(e));
                 if (!e.metaKey && !e.ctrlKey) e.preventDefault();
@@ -1702,9 +1819,10 @@
         });
         document.addEventListener('keyup', (e) => {
             if (!authenticated) return;
+            if (isLocalTextEntry(e)) return;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send('key:up,' + eventToVk(e));
-                e.preventDefault();
+                if (!e.metaKey && !e.ctrlKey) e.preventDefault();
             }
         });
 
@@ -1725,18 +1843,40 @@
                 hiddenKbd.value = '';
             });
             hiddenKbd.addEventListener('keydown', (e) => {
-                if (e.key === 'Backspace' && ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send('key:down,8');
-                    setTimeout(() => ws.send('key:up,8'), 30);
-                } else if (e.key === 'Enter' && ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send('key:down,13');
-                    setTimeout(() => ws.send('key:up,13'), 30);
-                }
+                // Never let this reach the document-level handlers above: the character is
+                // already delivered by the 'input' event as key:text.
+                e.stopPropagation();
+                if (e.key !== 'Backspace' && e.key !== 'Enter') return;
+                e.preventDefault();
+                if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+                // Capture the socket: a drop between the send and the timer used to throw
+                // on a null/replaced `ws`.
+                const s = ws;
+                const vk = e.key === 'Backspace' ? 8 : 13;
+                s.send('key:down,' + vk);
+                setTimeout(() => {
+                    if (s && s.readyState === WebSocket.OPEN) s.send('key:up,' + vk);
+                }, 30);
             });
         }
 
         // --- Fit / Fill Stretch Mode Toggle ---
         let isFillMode = false;
+
+        // Nearest-neighbour sampling is only correct when the source is being enlarged.
+        // Downscaling a 2360x1640 desktop into a ~700px element with `pixelated` makes
+        // remote text shimmer, so switch the hint off automatically for downscale.
+        function updateCanvasScalingMode() {
+            const rect = canvas.getBoundingClientRect();
+            const srcW = canvas.width, srcH = canvas.height;
+            if (!srcW || !srcH || !rect.width || !rect.height) return;
+            const displayArea = isFillMode
+                ? rect.width * rect.height
+                : Math.min(rect.width, srcW) * Math.min(rect.height, srcH);
+            const upscaling = displayArea >= srcW * srcH;
+            canvas.classList.toggle('upscaled', upscaling);
+        }
+
         function toggleFitMode() {
             isFillMode = !isFillMode;
             const fitBtn = document.getElementById('fit-btn');
@@ -1747,6 +1887,7 @@
                 canvas.style.objectFit = 'contain';
                 if (fitBtn) fitBtn.innerText = '📐 Fit (Aspect)';
             }
+            updateCanvasScalingMode();
         }
 
         function toggleFullscreen() {
@@ -1790,7 +1931,7 @@
         let resolutionSyncTimer;
         function scheduleResolutionSync() {
             clearTimeout(resolutionSyncTimer);
-            resolutionSyncTimer = setTimeout(() => {}, 0);
+            resolutionSyncTimer = setTimeout(() => { updateCanvasScalingMode(); }, 0);
         }
         window.addEventListener('resize', scheduleResolutionSync);
         window.addEventListener('orientationchange', scheduleResolutionSync);

@@ -7,7 +7,10 @@ public final class VideoPipeline {
     private var decompressionSession: VTDecompressionSession?
     private var formatDescription: CMVideoFormatDescription?
     public var onFrameDecoded: ((CVPixelBuffer) -> Void)?
-    public var onDecodeError: (() -> Void)?
+    /// Fired on every failed frame with the VideoToolbox status, for host-side diagnosis.
+    public var onDecodeError: ((OSStatus) -> Void)?
+    /// Fired once the errors look systematic (3 consecutive) and a keyframe is needed.
+    public var onSessionRecoveryNeeded: (() -> Void)?
     private var consecutiveDecodeErrors = 0
 
     public init() {}
@@ -229,9 +232,14 @@ public final class VideoPipeline {
                 // after 3 in a row, ask for a fresh keyframe. The server rate-limits encoder
                 // restarts, so this cannot flood. Resets on the next good frame.
                 self.consecutiveDecodeErrors += 1
+                // Report the reason alongside the keyframe request. The server's `decerr:`
+                // is its primary signal for diagnosing decoder problems on a given device,
+                // and the native client was only ever sending a bare `forceidr`, so every
+                // iOS-native failure looked like silence in the host log.
+                self.onDecodeError?(OSStatus(status))
                 if self.consecutiveDecodeErrors >= 3 {
                     self.consecutiveDecodeErrors = 0
-                    self.onDecodeError?()
+                    self.onSessionRecoveryNeeded?()
                 }
                 return
             }

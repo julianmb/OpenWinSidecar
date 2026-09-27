@@ -14,6 +14,8 @@ public final class StreamConnection: NSObject, URLSessionWebSocketDelegate {
     public var onAuthFailed: (() -> Void)?
     public var onAuthenticated: (() -> Void)?
     public var onCodecFallback: (() -> Void)?
+    /// The host refused a client-sent stream setting because the desktop app owns them.
+    public var onHostSettingRefused: (() -> Void)?
 
     private var isConnected = false
     private var shouldReconnect = false
@@ -34,10 +36,30 @@ public final class StreamConnection: NSObject, URLSessionWebSocketDelegate {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = false
         self.session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue())
-        // Sustained decode failures mean our reference state is stale (corrupt chunk,
-        // missed keyframe): ask the server for a fresh IDR. Server-side restarts are
-        // rate-limited, and the pipeline only fires every 3rd consecutive failure.
-        videoPipeline.onDecodeError = { [weak self] in self?.sendForceIdr() }
+        // Report every decode failure to the host with its VideoToolbox status - the
+        // server's `decerr:` line is the only way to tell "this device can't do HEVC"
+        // apart from "the encoder produced a bad chunk" after the fact. Sustained
+        // failures additionally mean our reference state is stale (corrupt chunk, missed
+        // keyframe), so ask for a fresh IDR; server-side restarts are rate-limited and
+        // the pipeline only escalates every 3rd consecutive failure.
+        videoPipeline.onDecodeError = { [weak self] status in
+            self?.reportDecodeError(status)
+        }
+        videoPipeline.onSessionRecoveryNeeded = { [weak self] in
+            self?.sendForceIdr()
+        }
+    }
+
+    /// Decode failures arrive per frame, so an uncapped `decerr:` would flood the host log
+    /// (and the socket) during exactly the episode where the user needs help. One report
+    /// per second is enough to identify the failing status code.
+    private var lastDecodeErrorReport: TimeInterval = 0
+
+    private func reportDecodeError(_ status: OSStatus) {
+        let now = Date().timeIntervalSince1970
+        guard now - lastDecodeErrorReport >= 1.0 else { return }
+        lastDecodeErrorReport = now
+        sendText("decerr:\(status)")
     }
 
     public func connect(host: String, port: Int = 8080) {
@@ -263,6 +285,13 @@ public final class StreamConnection: NSObject, URLSessionWebSocketDelegate {
         // The server fell back to JPEG (e.g. encoder cap). This client only decodes HEVC.
         if text == "codec:intra" {
             DispatchQueue.main.async { [weak self] in self?.onCodecFallback?() }
+            return
+        }
+        // The desktop app owns stream settings; the server refuses client-side changes
+        // and says so instead of ignoring them. Surface it rather than leaving the user
+        // tapping a control that does nothing.
+        if text == "hostset" {
+            DispatchQueue.main.async { [weak self] in self?.onHostSettingRefused?() }
             return
         }
         // One-shot hvcC description + codec string: desc:<codec>|<base64-hvcC>

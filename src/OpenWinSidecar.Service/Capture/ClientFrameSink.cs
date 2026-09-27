@@ -209,6 +209,18 @@ public sealed class ClientFrameSink : IDisposable
             : Visible == false ? "Hidden" : !HasRecentFrames ? "No recent frames" : $"{Fps} fps";
         public string LatencyText => MetricsFresh && LatencyMs > 0 ? $"{LatencyMs} ms" : "—";
         public string BitrateText => Kbps > 0 ? $"{Kbps / 1000.0:F1} Mbps" : "";
+
+        /// <summary>How long since this client last painted a frame. A connected client that
+        /// has stopped delivering frames is the failure users actually hit, and without an
+        /// age the row looks identical to a healthy one (fps/bitrate just read "-").</summary>
+        public string FrameAgeText => FrameAgeMs is null ? "" : FrameAgeMs < 1500
+            ? ""                                  // healthy: the fps readout already tells the story
+            : FrameAgeMs < 60000 ? $"last frame {FrameAgeMs / 1000:F0}s ago"
+            : "no frames for " + (FrameAgeMs.Value / 60000).ToString("F0") + "m";
+
+        /// <summary>True when the client is connected but not actually presenting anything —
+        /// a stall, not a disconnect.</summary>
+        public bool IsStalled => FrameAgeMs is >= 1500 || Visible == false;
     }
 
     public static List<ConnectedClientSnapshot> Snapshot(DateTime? nowUtc = null)

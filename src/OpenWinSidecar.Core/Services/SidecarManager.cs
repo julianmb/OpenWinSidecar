@@ -47,21 +47,37 @@ public class SidecarManager
     public (bool Success, string Message) EnableVirtualDisplayAndStartService()
     {
         bool driverOk = VirtualDisplayManager.EnableVirtualDisplay();
+
         if (OnStartStreaming != null)
         {
+            // Start the stream regardless: a device that is already enabled needs no
+            // successful enable command (devcon/pnputil both fail without elevation), and
+            // the host is frequently launched unelevated. What was wrong before was not the
+            // behaviour but the reporting — it returned success and set
+            // IsVirtualDisplayActive unconditionally, so a missing or disabled driver was
+            // presented as a working virtual display.
             OnStartStreaming.Invoke();
-            IsVirtualDisplayActive = true;
-            return (true, "Virtual display enabled and streaming started (in-process).");
+            IsVirtualDisplayActive = driverOk;
+            return driverOk
+                ? (true, "Virtual display enabled and streaming started (in-process).")
+                : (false, "Streaming started, but the virtual display driver could not be enabled — " +
+                          (VirtualDisplayManager.IsElevated()
+                              ? "restart the driver from the display card."
+                              : "restart OpenWinSidecar as administrator."));
         }
 
         var (srvStarted, srvMsg) = ProcessManager.StartInteractive();
-        IsVirtualDisplayActive = srvStarted;
-        
-        if (srvStarted)
+        IsVirtualDisplayActive = srvStarted && driverOk;
+
+        if (srvStarted && driverOk)
         {
             return (true, "Virtual 3rd Screen enabled and streaming service started.");
         }
-        return (driverOk, $"Virtual 3rd Screen enabled. Service: {srvMsg}");
+        if (srvStarted)
+        {
+            return (false, $"Streaming service started, but the virtual display driver could not be enabled. Service: {srvMsg}");
+        }
+        return (false, $"Virtual 3rd Screen enabled. Service: {srvMsg}");
     }
 
     /// <summary>
