@@ -280,9 +280,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Clamps the requested window size to the usable work area. PrimaryScreenHeight
-    /// includes the taskbar, so centring against it pushed the bottom of the window
-    /// (Advanced expander, log preview) below the visible area on short screens.
+    /// Clamps the window to the usable work area. The height tracks its content
+    /// (SizeToContent), so this sets a ceiling rather than a fixed height - otherwise a
+    /// client list with several devices could grow the window off the bottom of a short
+    /// screen. Work area, not full screen: the taskbar eats the bottom ~48px.
     /// </summary>
     private void FitToWorkArea()
     {
@@ -292,10 +293,10 @@ public partial class MainWindow : Window
             if (double.IsNaN(area.Width) || double.IsNaN(area.Height) || area.Width <= 0 || area.Height <= 0)
                 return;
 
-            if (Width > area.Width - 20) Width = Math.Max(880, area.Width - 20);
-            if (Height > area.Height - 20) Height = Math.Max(560, area.Height - 20);
+            if (Width > area.Width - 20) Width = Math.Max(800, area.Width - 20);
+            MaxHeight = Math.Max(380, area.Height - 20);
+            MaxWidth = Math.Max(800, area.Width - 20);
             if (Left + Width > area.Left + area.Width) Left = area.Left + Math.Max(0, (area.Width - Width) / 2);
-            if (Top + Height > area.Top + area.Height) Top = area.Top;
         }
         catch { }
     }
@@ -309,8 +310,8 @@ public partial class MainWindow : Window
             var area = SystemParameters.WorkArea;
             double pW = area.Width > 0 ? area.Width : SystemParameters.PrimaryScreenWidth;
             double pH = area.Height > 0 ? area.Height : SystemParameters.PrimaryScreenHeight;
-            double w = ActualWidth > 0 ? ActualWidth : (Width > 0 ? Width : 1020);
-            double h = ActualHeight > 0 ? ActualHeight : (Height > 0 ? Height : 580);
+            double w = ActualWidth > 0 ? ActualWidth : (Width > 0 ? Width : 900);
+            double h = ActualHeight > 0 ? ActualHeight : (Height > 0 ? Height : 480);
             Left = area.Left + Math.Max(0, (pW - w) / 2);
             Top = area.Top + Math.Max(0, (pH - h) / 2);
         }
@@ -550,19 +551,23 @@ public partial class MainWindow : Window
         TxtClientsHeader.Text = clients.Count == 0 ? "Connected clients" : $"Connected clients ({clients.Count})";
         ClientsList.ItemsSource = clients;
 
-        // Session card
-        var sessionMonitor = _manager.DisplayMonitors.FirstOrDefault(m => m.IsVirtual);
-        TxtSessionState.Text = _streamingHost.IsRunning ? "Streaming" : "Stopped";
-        TxtSessionDisplay.Text = sessionMonitor != null
-            ? $"{sessionMonitor.DeviceName} · {sessionMonitor.Width}×{sessionMonitor.Height} @ {sessionMonitor.RefreshRate} Hz"
-            : "—";
+        // Session card. State, display identity and the client count moved out: the hero
+        // card directly above already shows the first two (with the same text) and the
+        // clients card below shows the third. Repeating them meant the same fact had to
+        // be kept in sync in three places.
         TxtSessionEncoder.Text = _streamingHost.IsRunning
             ? OpenWinSidecar.Service.Encoders.HevcStreamEncoder.SelectedEncoderName
             : "—";
-        TxtSessionClients.Text = clients.Count.ToString();
         TxtSessionUptime.Text = _streamingHost.IsRunning
             ? FormatUptime(DateTime.UtcNow - Process.GetCurrentProcess().StartTime.ToUniversalTime())
             : "—";
+        SessionCard.Visibility = _streamingHost.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+
+        // Make the selected codec agree with the encoder actually in use. Without this the
+        // panel claimed "HEVC (Recommended)" while the session row reported "JPEG (no
+        // hardware encoder)" - two panels contradicting each other with no explanation of
+        // which one to believe.
+        UpdateCodecItemLabels();
 
         // Performance Sparkline
         // Fed by the best *presenting* client, not clients.Max(Fps): a stalled client
@@ -570,7 +575,38 @@ public partial class MainWindow : Window
         // looked like "performance dropped" rather than "a client stopped".
         double maxFps = clients.Where(c => c.MetricsFresh).Select(c => (double)c.Fps).DefaultIfEmpty(0).Max();
         double avgLat = clients.Where(c => c.MetricsFresh && c.LatencyMs > 0).Select(c => (double)c.LatencyMs).DefaultIfEmpty(0).Average();
+        // Nothing to plot with nobody connected. It used to render a flat line next to
+        // "- fps / - ms", which is the least useful thing on the panel.
+        SparklineCard.Visibility = clients.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSparkline(maxFps, avgLat);
+    }
+
+    /// <summary>
+    /// Reflects encoder availability in the codec dropdown itself, so the setting and the
+    /// session row never disagree. HEVC needs FFmpeg plus a hardware encoder; when either
+    /// is missing the stream silently falls back to JPEG, which used to look like the
+    /// setting had been ignored rather than like it being unavailable.
+    /// </summary>
+    private void UpdateCodecItemLabels()
+    {
+        // The FFmpeg banner is the existing source of truth for "the HEVC dependency is
+        // missing", so reuse it rather than probing the PATH a second time.
+        bool ffmpegMissing = FfmpegBanner.Visibility == Visibility.Visible;
+        bool hevcAvailable = !ffmpegMissing && OpenWinSidecar.Service.Encoders.HevcStreamEncoder.HardwareEncoderActive;
+        bool hevcSelected = CmbStreamCodec.SelectedIndex == 0;
+
+        CmbCodecHevc.Content = hevcAvailable
+            ? "HEVC (Recommended)"
+            : "HEVC (unavailable - using JPEG)";
+        CmbCodecJpeg.Content = hevcAvailable ? "JPEG" : "JPEG (fallback)";
+
+        CmbStreamCodec.ToolTip = !ffmpegMissing && !hevcSelected
+            ? "JPEG fallback. Lower latency, much higher bandwidth, softer text."
+            : hevcSelected
+                ? (ffmpegMissing
+                    ? "HEVC is unavailable: FFmpeg was not found, so the stream is falling back to JPEG."
+                    : "HEVC is unavailable: no hardware encoder was detected, so the stream is falling back to JPEG.")
+                : "Hardware HEVC end to end. The viewer needs a browser that supports HEVC.";
     }
 
     private readonly Queue<(double fps, double lat)> _sparklineHistory = new();
@@ -1334,13 +1370,96 @@ public partial class MainWindow : Window
             AccessBadgeShape.Background = (SolidColorBrush)FindResource("Good");
             TxtAccessBadge.Foreground = (SolidColorBrush)FindResource("Good");
             TxtAccessBadge.Text = "Password protected";
+            AccessBadgeShape.ToolTip = TxtAccessBadge.ToolTip =
+                "A device must present the access password before it can see the screen or send input.";
         }
         else
         {
             AccessBadgeShape.Background = (SolidColorBrush)FindResource("Bad");
             TxtAccessBadge.Foreground = (SolidColorBrush)FindResource("Bad");
-            TxtAccessBadge.Text = "Open access — anyone on this network can connect";
+            TxtAccessBadge.Text = "Open to this network";
+            AccessBadgeShape.ToolTip = TxtAccessBadge.ToolTip =
+                "No access password is set, so anyone on this network can see the screen and send input.";
         }
+    }
+
+    /// <summary>
+    /// Prompts for an access password straight from the "Open access" badge. The warning
+    /// was previously unaccompanied: the only control that could fix it (the PasswordBox)
+    /// lived inside a collapsed expander two panels away, so the warning was a dead end.
+    /// </summary>
+    private void BtnSetPassword_Click(object sender, RoutedEventArgs e)
+    {
+        string? entered = PromptForPassword(
+            "Set access password",
+            "Anyone on this network will need this before they can see the screen or send input.\n\nLeave empty to remove the password and allow open access.");
+
+        if (entered == null) return; // cancelled
+
+        var s = new SidecarSettings
+        {
+            ServerStartType = ChkAutoStart.IsChecked == true ? ServerStartMode.On : ServerStartMode.Off,
+            EncryptionPassword = entered
+        };
+
+        bool saved = _manager.RegistryManager.SaveSettings(s);
+        if (saved)
+        {
+            TxtPassword.Password = entered;
+            UpdateAccessBadge(!string.IsNullOrWhiteSpace(entered));
+            SetStatus(string.IsNullOrWhiteSpace(entered)
+                ? "Access password removed - anyone on this network can connect."
+                : "Access password set. Viewers will be asked for it on their next connection.");
+        }
+        else
+        {
+            SetStatus("Could not save the access password (run as Administrator).");
+        }
+    }
+
+    /// <summary>Minimal modal password prompt. Returns null when cancelled.</summary>
+    private static string? PromptForPassword(string title, string message)
+    {
+        // Fully qualified: this file imports both WPF and WinForms, so Button,
+        // Orientation, Application and HorizontalAlignment are all ambiguous.
+        var dialog = new System.Windows.Window
+        {
+            Title = title,
+            Width = 380,
+            SizeToContent = System.Windows.SizeToContent.Height,
+            ResizeMode = System.Windows.ResizeMode.NoResize,
+            WindowStartupLocation = System.Windows.WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+        };
+
+        var box = new System.Windows.Controls.PasswordBox { Margin = new System.Windows.Thickness(0, 6, 0, 10), FontSize = 13 };
+        var setButton = new System.Windows.Controls.Button { Content = "Set password", Width = 92, Height = 26, IsDefault = true };
+        var cancelButton = new System.Windows.Controls.Button { Content = "Cancel", Width = 72, Height = 26, IsCancel = true };
+
+        setButton.Click += (s, e) => dialog.DialogResult = true;
+        cancelButton.Click += (s, e) => dialog.DialogResult = false;
+
+        var buttons = new System.Windows.Controls.StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(setButton);
+        buttons.Children.Add(cancelButton);
+
+        var panel = new System.Windows.Controls.StackPanel { Margin = new System.Windows.Thickness(16) };
+        panel.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = message,
+            TextWrapping = System.Windows.TextWrapping.Wrap,
+            Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("TextSecondary"),
+        });
+        panel.Children.Add(box);
+        panel.Children.Add(buttons);
+        dialog.Content = panel;
+
+        box.Focus();
+        return dialog.ShowDialog() == true ? box.Password : null;
     }
 
     private void BtnSaveSettings_Click(object sender, RoutedEventArgs e)
