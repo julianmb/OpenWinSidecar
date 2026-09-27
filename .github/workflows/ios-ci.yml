@@ -43,9 +43,22 @@ jobs:
           # and this package is declared `platforms: [.iOS("16.0)]` and imports UIKit, so
           # it can never build for the host. `xcodebuild` with an iOS destination is the
           # only correct invocation, and an .iOSApplication product additionally needs
-          # Xcode's app pipeline. This is why the job failed on every run regardless of
-          # the Xcode version selected.
-          xcodebuild -scheme OpenWinSidecar -destination 'generic/platform=iOS' build
+          # Xcode's app pipeline.
+          #
+          # On failure, copy the compiler errors into the run summary. GitHub's log
+          # download endpoint requires authentication, so without this the only way to
+          # see the actual error is to be able to fetch the raw log.
+          set -o pipefail
+          xcodebuild -scheme OpenWinSidecar -destination 'generic/platform=iOS' build 2>&1 \
+            | tee /tmp/xcodebuild.log \
+            || {
+                echo "### xcodebuild failed - first errors" >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+                grep -E "error:|fatal error|BUILD FAILED|build commands failed" /tmp/xcodebuild.log \
+                  | sort -u | head -40 >> "$GITHUB_STEP_SUMMARY" || echo "(no error lines matched)" >> "$GITHUB_STEP_SUMMARY"
+                echo '```' >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              }
 
       # The server distributes OpenWinSidecar.swiftpm.zip (see SidecarTcpServer.ServeIosAppZipAsync).
       # Rebuild it from the single canonical source on every green build so it can never go stale.
