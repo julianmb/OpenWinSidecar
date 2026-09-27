@@ -37,6 +37,14 @@ let package = Package(
             ]
         )
     ],
+    // Compile as Swift 5. Declaring tools-version 6.0 opts the whole package into the
+    // Swift 6 language mode, where strict concurrency is enforced: the existing
+    // UIViewRepresentable update closures that hand `self` to the connection are reported
+    // as "sending 'self' risks causing data races", and that is a hard error. This code
+    // was written against Swift 5 semantics and has not been concurrency-audited, so pin
+    // the language mode rather than pretending it has been. Auditing it properly is real
+    // work and belongs with someone who can test on a device.
+    swiftLanguageModes: [.v5],
     targets: [
         .executableTarget(
             name: "AppModule",

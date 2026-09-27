@@ -133,17 +133,18 @@ public final class VideoPipeline {
             kCVPixelBufferOpenGLCompatibilityKey: false
         ]
 
-        // Swift imports the C `decompressionOutputCallback` + `decompressionOutputRefCon`
-        // pair as ONE optional closure parameter labelled `outputHandler:`. There is no
-        // `outputCallback:` label and no VTDecompressionOutputCallbackRecord - passing one
-        // is the "extra argument 'outputCallback' in call" error this file produced.
-        // Capturing self weakly also removes the Unmanaged refcon round-trip.
+        // Swift exposes TWO overloads of VTDecompressionSessionCreate. The C-shaped one
+        // takes destinationImageBufferAttributes plus a callback record; the Swift one
+        // takes imageBufferAttributes plus an outputHandler closure. Mixing a label from
+        // each overload matches neither and fails with "extra argument".
+        //
+        // Weak self also removes the Unmanaged refcon round-trip the record needed.
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
             videoDecoderSpecification: nil,
-            destinationImageBufferAttributes: pixelBufferAttributes as CFDictionary,
+            imageBufferAttributes: pixelBufferAttributes as CFDictionary,
             outputHandler: { [weak self] _, _, callbackStatus, _, imageBuffer, _, _ in
                 guard callbackStatus == noErr, let pixelBuffer = imageBuffer else { return }
                 self?.onFrameDecoded?(pixelBuffer)
