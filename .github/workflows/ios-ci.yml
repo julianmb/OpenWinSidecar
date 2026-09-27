@@ -27,10 +27,19 @@ jobs:
       - name: Show toolchain
         run: swift --version
 
+      - name: List schemes
+        run: cd ios/OpenWinSidecarClient && xcodebuild -list
+
       - name: Build Swift Package App
         run: |
           cd ios/OpenWinSidecarClient
-          swift build -v
+          # NOT `swift build`. That compiles the package for the HOST, which is macOS -
+          # and this package is declared `platforms: [.iOS("16.0)]` and imports UIKit, so
+          # it can never build for the host. `xcodebuild` with an iOS destination is the
+          # only correct invocation, and an .iOSApplication product additionally needs
+          # Xcode's app pipeline. This is why the job failed on every run regardless of
+          # the Xcode version selected.
+          xcodebuild -scheme OpenWinSidecar -destination 'generic/platform=iOS' build
 
       # The server distributes OpenWinSidecar.swiftpm.zip (see SidecarTcpServer.ServeIosAppZipAsync).
       # Rebuild it from the single canonical source on every green build so it can never go stale.
