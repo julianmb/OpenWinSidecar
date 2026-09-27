@@ -106,7 +106,13 @@
             transition: opacity 0.3s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s;
         }
         #top-pill.dimmed {
-            opacity: 0.2;
+            opacity: 0.55;
+        }
+        /* Never fade a problem out of sight. On a device that generates no pointermove
+           (an iPad sitting on a desk) the dim timer is always running, so a warning that
+           dimmed to 0.2 on black was effectively invisible. */
+        #top-pill.dimmed.has-problem {
+            opacity: 1;
         }
         #top-pill:hover, #top-pill:active {
             opacity: 0.95 !important;
@@ -115,8 +121,15 @@
             border-color: rgba(96, 165, 250, 0.5);
         }
         /* State colors on the blue/yellow axis (readable under red-green color-vision
-           deficiencies); every state is also distinguishable by shape or text alone. */
-        .dot { width: 5px; height: 5px; background: #60A5FA; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+           deficiencies); every state is also distinguishable by the text beside it. */
+        .dot { width: 5px; height: 5px; background: #60A5FA; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; flex: 0 0 auto; }
+        /* Degraded but working: JPEG fallback, waiting on a keyframe. */
+        .dot.warn { background: #FBBF24; animation-duration: 1.1s; }
+        /* Not working: no frames, dead renderer, nothing received. Square, so the state is
+           readable by shape alone without relying on colour. */
+        .dot.error { background: #F87171; border-radius: 1px; animation: none; }
+        .dot.ok { background: #34D399; }
+        .pill-note { font-weight: 600; }
         .gear { font-size: 11px; opacity: 0.75; line-height: 1; }
 
         .pwa-toast {
@@ -368,10 +381,11 @@
         </div>
     </div>
     <div id='container'>
-        <div id='top-pill' onclick='toggleSettingsModal()'>
-            <span class='dot'></span>
+        <div id='top-pill' onclick='toggleSettingsModal()' role='button' tabindex='0' aria-label='Stream status and settings'>
+            <span class='dot' id='status-dot'></span>
             <span id='fps'>— FPS</span>
             <span id='lat' style='opacity:0.7;'></span>
+            <span class='pill-note' id='status-note'></span>
             <span class='gear'>⚙</span>
         </div>
 
@@ -408,7 +422,7 @@
                     <div class='setting-group'>
                         <label>Actions</label>
                         <div class='btn-grid'>
-                            <button class='action-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
+                            <button class='action-btn' id='fullscreen-btn' onclick='toggleFullscreen()'>⛶ Fullscreen</button>
                             <button id='kbd-btn' onclick='toggleVirtualKeyboard()'>⌨ Keyboard</button>
                         </div>
                     </div>
@@ -425,7 +439,7 @@
 
                         <div class='setting-group' style='margin-top: 14px;'>
                             <label>Native iPad Companion App</label>
-                            <a href='/OpenWinSidecar.swiftpm.zip' download style='display:flex;align-items:center;justify-content:center;gap:8px;text-align:center;text-decoration:none;background:#2563EB;color:#fff;padding:12px 16px;border-radius:12px;font-weight:700;font-size:13px;'>
+                            <a id='ios-app-download' href='/OpenWinSidecar.swiftpm.zip' download style='display:flex;align-items:center;justify-content:center;gap:8px;text-align:center;text-decoration:none;background:#2563EB;color:#fff;padding:12px 16px;border-radius:12px;font-weight:700;font-size:13px;'>
                                 <span>📲</span><span>Download iPad App (.swiftpm)</span>
                             </a>
                             <div style='font-size:11px;color:rgba(255,255,255,0.55);line-height:1.4;margin-top:4px;'>
@@ -615,6 +629,7 @@
                         if (restoredTex) {
                             glTexture = restoredTex;
                             glContextLost = false;
+                            rendererLostSince = null;
                             console.log('[Renderer] WebGL context restored');
                         }
                     } catch (err) {
@@ -639,14 +654,16 @@
             console.log('[Renderer] Canvas2D path active');
         }
 
+        // Returns true when the frame actually reached the screen. A lost GL context
+        // accepts every draw call and paints nothing, so it must NOT be reported as a
+        // successful paint: recordFps() refreshes lastPaintAt, and letting a dropped frame
+        // do that left the pill reporting healthy fps over a dead canvas and stopped the
+        // "no recent frames" watchdog from ever firing.
         function paintDrawable(d) {
             if (useWebGL && gl) {
-                // A lost context accepts every call and draws nothing. Skip the frame so the
-                // canvas keeps its last good image instead of going black, and so the frame
-                // is not counted as a successful paint.
                 if (glContextLost || gl.isContextLost()) {
                     droppedRenderCount++;
-                    return;
+                    return false;
                 }
                 if (canvas.width !== d.width || canvas.height !== d.height) {
                     canvas.width = d.width;
@@ -656,13 +673,14 @@
                 gl.bindTexture(gl.TEXTURE_2D, glTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, d.source);
                 gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-                return;
+                return true;
             }
             if (canvas.width !== d.width || canvas.height !== d.height) {
                 canvas.width = d.width;
                 canvas.height = d.height;
             }
             ctx.drawImage(d.source, 0, 0);
+            return true;
         }
 
         // VSync-paced presentation. Decoded frames are staged and painted on
@@ -672,6 +690,10 @@
         // last image). Ownership of a staged frame moves to the loop, which closes it after paint.
         let pendingDrawable = null;
         let hasPendingDrawable = false;
+        // Set when a frame could not be painted because the GL context was lost. Unlike
+        // droppedRenderCount this is a "since" timestamp, because what matters to the user
+        // is whether the renderer is broken right now, not how many frames it ate.
+        let rendererLostSince = null;
 
         function submitDrawable(source, width, height, timestampUs, receivedAt) {
             if (pendingDrawable && pendingDrawable.source && pendingDrawable.source.close) {
@@ -694,21 +716,28 @@
                 try {
                     const paintStart = performance.now();
                     presentationWaitSum += paintStart - d.stagedAt;
-                    paintDrawable(d);
+                    const painted = paintDrawable(d);
                     paintTimeSum += performance.now() - paintStart;
-                    if (d.receivedAt != null) {
-                        receiptToPaintSum += performance.now() - d.receivedAt;
-                        receiptToPaintSamples++;
-                    }
-                    if (d.timestampUs !== null && d.timestampUs !== undefined && clockOffsetMs !== null) {
-                        // offset = serverMs - clientMs, so client clock = server clock - offset
-                        const lat = performance.now() - (d.timestampUs / 1000 - clockOffsetMs);
-                        if (lat >= 0 && lat < 3000) {
-                            latencySum += lat; latencySamples++;
-                            lastLatencyAt = performance.now();
-                            if (lat > latencyMax) latencyMax = lat;
+                    if (painted) {
+                        if (d.receivedAt != null) {
+                            receiptToPaintSum += performance.now() - d.receivedAt;
+                            receiptToPaintSamples++;
                         }
-                    }                    recordFps();
+                        if (d.timestampUs !== null && d.timestampUs !== undefined && clockOffsetMs !== null) {
+                            // offset = serverMs - clientMs, so client clock = server clock - offset
+                            const lat = performance.now() - (d.timestampUs / 1000 - clockOffsetMs);
+                            if (lat >= 0 && lat < 3000) {
+                                latencySum += lat; latencySamples++;
+                                lastLatencyAt = performance.now();
+                                if (lat > latencyMax) latencyMax = lat;
+                            }
+                        }
+                        recordFps();
+                    } else {
+                        // Lost renderer: report the stall so the status surface can say so,
+                        // rather than silently presenting the last good numbers.
+                        rendererLostSince = rendererLostSince || performance.now();
+                    }
                 } catch (e) {
                     console.warn('[Render Error]', e);
                 } finally {
@@ -872,6 +901,20 @@ let reconnectDelayMs = 1000;
             if (latLabel) latLabel.textContent = '';
         }
 
+        // How long without a paint before we call it stalled. This used to reuse the
+        // 10-second telemetry staleness window, which meant a frozen canvas kept showing
+        // the last good "30 FPS - 42ms" for ten seconds - the worst possible failure
+        // signal, since the numbers looked healthy.
+        const STALL_AFTER_MS = 1200;
+
+        // Degradation notices raised by the stream. These used to be console.warn only,
+        // so on a device with no console the user saw a silently worse stream: the pill
+        // kept its healthy blue dot and the same FPS text while the encoder had dropped
+        // to JPEG at several times the bitrate.
+        let statusNote = '';
+        function setStatusNote(text, level) { statusNote = text; statusLevel = level || 'warn'; }
+        let statusLevel = 'ok';
+
         function updateTelemetryStatus() {
             const now = performance.now();
             if (!localPreviewApproved) fpsLabel.textContent = 'Preview not started';
@@ -882,13 +925,56 @@ let reconnectDelayMs = 1000;
                     : '⟳ reconnecting';
             }
             else if (lastPaintAt === null) fpsLabel.textContent = 'Waiting for frames';
-            else if (now - lastPaintAt >= TELEMETRY_STALE_MS) {
-                fpsLabel.textContent = 'No recent frames · ' + Math.floor((now - lastPaintAt) / 1000) + 's ago';
+            else if (now - lastPaintAt >= STALL_AFTER_MS) {
+                fpsLabel.textContent = 'Stalled · last frame ' + Math.floor((now - lastPaintAt) / 1000) + 's ago';
             }
             if (document.hidden || !ws || ws.readyState !== WebSocket.OPEN ||
                 lastLatencyAt === null || now - lastLatencyAt >= TELEMETRY_STALE_MS) {
                 if (latLabel) latLabel.textContent = '';
             }
+
+            updatePillState(now);
+        }
+
+        // The pill is the only status surface a viewer has, so it has to say what is
+        // actually happening. Dot colour carries the severity (and shape, for colour-vision
+        // independence); the text carries the reason.
+        function updatePillState(now) {
+            const dot = document.getElementById('status-dot');
+            const note = document.getElementById('status-note');
+            const pill = document.getElementById('top-pill');
+            if (!dot || !note || !pill) return;
+
+            let level = 'ok';
+            let text = '';
+
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                level = 'error';
+                text = reconnectAttempt > 0 ? 'reconnecting' : 'offline';
+            } else if (glContextLost || (rendererLostSince && now - rendererLostSince < 5000)) {
+                level = 'error';
+                text = 'renderer lost';
+            } else if (statusNote) {
+                level = statusLevel;
+                text = statusNote;
+            } else if (needsHevcKeyframe && activeCodec === 'hevc' && lastPaintAt !== null) {
+                level = 'warn';
+                text = 'waiting for keyframe';
+            } else if (lastPaintAt === null) {
+                level = 'warn';
+                text = 'waiting for frames';
+            } else if (now - lastPaintAt >= STALL_AFTER_MS) {
+                level = 'error';
+                text = 'stalled ' + Math.floor((now - lastPaintAt) / 1000) + 's';
+            } else if (activeCodec === 'intra') {
+                level = 'warn';
+                text = 'JPEG fallback';
+            }
+
+            dot.className = 'dot' + (level === 'ok' ? ' ok' : level === 'warn' ? ' warn' : ' error');
+            note.textContent = text;
+            // Keep a problem fully opaque: the dim timer runs constantly on a touch device.
+            pill.classList.toggle('has-problem', level !== 'ok');
         }
         setInterval(updateTelemetryStatus, 1000);
 
@@ -1332,10 +1418,28 @@ let reconnectDelayMs = 1000;
             if (overlay) overlay.classList.remove('active');
         }
 
+        // Held in memory for this tab only, never persisted and never sent in clear over
+        // the WebSocket (the handshake still sends SHA-256(password + challenge)). It exists
+        // solely so the "Download iPad App" link can present the access token that the zip
+        // route requires - a plain <a download> cannot set a header, and the connect URL
+        // carries no ?pw=, so on a password-protected host that button used to 403.
+        let accessPassword = null;
+
+        function refreshIosDownloadLink() {
+            const a = document.getElementById('ios-app-download');
+            if (!a) return;
+            a.href = accessPassword
+                ? '/OpenWinSidecar.swiftpm.zip?pw=' + encodeURIComponent(accessPassword)
+                : '/OpenWinSidecar.swiftpm.zip';
+        }
+
         function submitAuth() {
             const input = document.getElementById('auth-input');
             const pw = input ? input.value : '';
             if (!pw || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            accessPassword = pw;
+            refreshIosDownloadLink();
 
             if (authChallenge) {
                 // Challenge-response: send SHA-256(password + challenge), never the password
@@ -1548,6 +1652,11 @@ let reconnectDelayMs = 1000;
                                     activeDepth = 8;
                                     if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:8');
                                     console.warn('[Color] Stream profile rejected by decoder — reverted to 8-bit');
+                                    setStatusNote('profile rejected — retrying at 8-bit', 'warn');
+                                } else {
+                                    // A working HEVC decoder supersedes any earlier degradation
+                                    // notice (a previous JPEG fallback, a rejected profile).
+                                    setStatusNote('', 'ok');
                                 }
                             }
                         }
@@ -1579,12 +1688,17 @@ let reconnectDelayMs = 1000;
                     // Server-side codec fallback notification (e.g. QSV encoder unavailable)
                     if (e.data === 'codec:intra') {
                         activeCodec = 'intra';
+                        // Say so. The encoder dropping to JPEG is a large, visible change in
+                        // bandwidth and sharpness, and it used to reach the user only as a
+                        // console warning.
+                        setStatusNote('JPEG fallback — much higher bandwidth', 'warn');
                     }
                     // The desktop app owns display/quality/fps/zoom. The server refuses
                     // client-side changes, so the control that sent one is dead — say so
                     // instead of leaving a button that silently does nothing.
                     if (e.data === 'hostset') {
                         console.warn('[Settings] Ignored: stream settings are controlled by the desktop app');
+                        setStatusNote('settings are controlled by the desktop app', 'warn');
                     }
                     return;
                 }
@@ -1890,16 +2004,48 @@ let reconnectDelayMs = 1000;
             updateCanvasScalingMode();
         }
 
+        // iPadOS Safari does not implement the Fullscreen API for anything except <video>
+        // (WebKit bug 179654), and there is no webkitRequestFullscreen fallback for a page.
+        // requestFullscreen() therefore rejects, the old code swallowed that in an empty
+        // .catch(), and the single most-tapped button for a first-time iPad user silently
+        // did nothing forever. The real answer on iPad is already implemented in this file -
+        // running from the Home Screen in standalone mode - so the button now says that
+        // instead of pretending, and reports honestly if a request does fail.
+        function fullscreenSupported() {
+            return !!document.fullscreenEnabled && !!document.documentElement.requestFullscreen;
+        }
+
         function toggleFullscreen() {
+            if (!fullscreenSupported()) {
+                showFullscreenHint();
+                return;
+            }
             if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().then(() => {
-                    setTimeout(() => {}, 0);
-                }).catch(() => {
+                document.documentElement.requestFullscreen().catch((err) => {
+                    console.warn('[Fullscreen] request rejected', err);
+                    setStatusNote('fullscreen was refused by the browser', 'warn');
                 });
             } else {
-                document.exitFullscreen().then(() => {
-                    setTimeout(() => {}, 0);
-                }).catch(() => {});
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        function showFullscreenHint() {
+            setStatusNote('use Share → Add to Home Screen for fullscreen', 'warn');
+            // The install guide already lives in this page; surface it rather than
+            // duplicating the instructions here.
+            const toast = document.getElementById('pwa-toast');
+            if (toast) toast.style.display = 'block';
+        }
+
+        // Keep the button's label truthful about the current state.
+        function updateFullscreenButton() {
+            const btn = document.getElementById('fullscreen-btn');
+            if (!btn) return;
+            const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            btn.innerText = active ? '⤢ Exit fullscreen' : '⤢ Fullscreen';
+            if (!fullscreenSupported() && !isPwaStandalone()) {
+                btn.innerText = '⤢ Add to Home Screen';
             }
         }
 
@@ -1918,16 +2064,15 @@ let reconnectDelayMs = 1000;
         resetPillDimmer();
 
         function handleFullscreenState() {
-            const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            if (isFull) {
-                document.body.classList.add('is-fullscreen');
-            } else {
-                document.body.classList.remove('is-fullscreen');
-            }
-            setTimeout(() => {}, 0);
+            // No layout depends on a body class here (there was an `is-fullscreen` toggle
+            // with no CSS rule behind it), so the only thing worth doing is keeping the
+            // button label honest about the current state.
+            updateFullscreenButton();
         }
         document.addEventListener('fullscreenchange', handleFullscreenState);
         document.addEventListener('webkitfullscreenchange', handleFullscreenState);
+        updateFullscreenButton();
+        refreshIosDownloadLink();
         let resolutionSyncTimer;
         function scheduleResolutionSync() {
             clearTimeout(resolutionSyncTimer);

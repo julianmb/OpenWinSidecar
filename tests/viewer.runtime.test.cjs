@@ -266,7 +266,10 @@ test('fresh frames expire and empty stats windows do not retain latency', () => 
     assert.equal(stats.latencyMs, 50);
     v.advance(7000);
     v.runIntervals();
-    assert.equal(v.run('fpsLabel.textContent'), 'No recent frames · 11s ago');
+    // Wording and threshold changed deliberately: a frozen canvas used to keep showing the
+    // last good "30 FPS - 42ms" for the full 10s telemetry-stale window before admitting
+    // anything was wrong. The stall threshold is now 1.2s.
+    assert.equal(v.run('fpsLabel.textContent'), 'Stalled · last frame 11s ago');
     assert.equal(v.run('latLabel.textContent'), '');
     stats = JSON.parse(v.sockets[0].sent.filter(m => m.startsWith('stats:')).pop().slice(6));
     assert.equal(stats.latencyMs, null);
@@ -616,5 +619,107 @@ test('the server refusing a client setting is surfaced instead of silently ignor
     v.context.console.warn = () => { warned = true; };
     socket.onmessage({ data: 'hostset' });
     assert.equal(warned, true);
+});
+
+// --- Item 1: a lost renderer must not look like a healthy stream --------------
+// recordFps() refreshes lastPaintAt. Letting a frame that was never painted call it left
+// the pill reporting the pre-loss fps forever and stopped the stall watchdog from firing.
+test('a frame lost to a dead GL context is not counted as a paint', () => {
+    const v = viewer();
+    configure(v);
+    v.run('gl = { isContextLost: () => true }; useWebGL = true; glContextLost = false;');
+    v.run('lastPaintAt = 1000;');
+    v.run('pendingDrawable = { source: { close() {} }, width: 64, height: 48 }; hasPendingDrawable = true;');
+    v.tick();
+    assert.equal(v.run('lastPaintAt'), 1000, 'lastPaintAt is not refreshed by an unpainted frame');
+    assert.equal(v.run('droppedRenderCount') > 0, true, 'the frame is still accounted for');
+    assert.ok(v.run('rendererLostSince') !== null, 'the renderer loss is timestamped for the status surface');
+});
+
+test('paintDrawable reports whether the frame actually reached the screen', () => {
+    const v = viewer();
+    // The harness's Canvas2D mock asserts the drawable is still open, so give it one.
+    assert.equal(v.run('paintDrawable({ source: { closed: false }, width: 64, height: 48 })'), true,
+        'a Canvas2D paint succeeds');
+    v.run('useWebGL = true; gl = { isContextLost: () => true }; glContextLost = true;');
+    assert.equal(v.run('paintDrawable({ source: { closed: false }, width: 64, height: 48 })'), false,
+        'a lost GL context reports failure instead of pretending to paint');
+});
+
+// --- Item 2: the iPad app download must work on a protected host --------------
+// The zip route requires the access token, a plain <a download> cannot set a header, and
+// the connect URL carries no ?pw=, so this button 403'd whenever a password was set.
+test('the iPad app download carries the access token once the viewer has one', () => {
+    const v = viewer();
+    v.run('connectWs();');
+    assert.equal(v.run("document.getElementById('ios-app-download').href"),
+        '/OpenWinSidecar.swiftpm.zip', 'no password yet, so no token is sent');
+    v.run("document.getElementById('auth-input').value = 'hunter2'; submitAuth();");
+    assert.equal(v.run("document.getElementById('ios-app-download').href"),
+        '/OpenWinSidecar.swiftpm.zip?pw=hunter2');
+    // With a challenge in play the WebSocket handshake still must not carry the password
+    // in clear - the retained copy is only ever used to build a link.
+    const v2 = viewer();
+    v2.run('connectWs(); authChallenge = "abc123";');
+    v2.run("document.getElementById('auth-input').value = 'hunter2'; submitAuth();");
+    const sent = v2.sockets.at(-1).sent;
+    assert.equal(sent.some(m => m === 'auth:hunter2'), false,
+        'the password is not sent raw when the server issued a challenge');
+    assert.equal(sent.some(m => m.startsWith('auth:') && m !== 'auth:hunter2'), true,
+        'a challenge-response hash is sent instead');
+});
+
+// --- Item 3: the fullscreen button must not be a dead affordance on iPadOS ----
+// iPadOS Safari does not implement requestFullscreen for non-video elements, and the old
+// code swallowed the rejection in an empty .catch(), so the most-tapped button for a
+// first-time iPad user silently did nothing forever.
+test('fullscreen reports honestly when the platform cannot do it', () => {
+    const v = viewer();
+    // The harness has no Fullscreen API, which is exactly the iPadOS situation.
+    assert.equal(v.run('fullscreenSupported()'), false);
+    assert.match(v.run("document.getElementById('fullscreen-btn').innerText"), /Add to Home Screen/);
+    v.run('toggleFullscreen();');
+    assert.equal(v.run('statusNote'), 'use Share → Add to Home Screen for fullscreen');
+    assert.equal(v.run("document.getElementById('pwa-toast').style.display"), 'block',
+        'the install guide already on the page is surfaced instead of duplicating instructions');
+});
+
+// --- Item 4: the pill is the only status surface, so it has to tell the truth ---
+test('the status pill reports a codec fallback rather than staying quietly healthy', () => {
+    const v = viewer();
+    v.run('connectWs();');
+    v.sockets.at(-1).onmessage({ data: 'codec:intra' });
+    v.run('updatePillState(performance.now());');
+    assert.equal(v.run("document.getElementById('status-note').textContent").includes('JPEG'), true);
+    assert.match(v.run("document.getElementById('status-dot').className"), /warn/);
+});
+
+test('a stalled or disconnected stream is an error state, not a healthy one', () => {
+    const v = viewer();
+    v.run('connectWs();');
+    v.run('lastPaintAt = performance.now(); statusNote = ""; needsHevcKeyframe = false;');
+    v.run('updatePillState(performance.now());');
+    assert.match(v.run("document.getElementById('status-dot').className"), /ok/, 'a live stream is fine');
+
+    v.run('lastPaintAt = performance.now() - 5000;');
+    v.run('updatePillState(performance.now());');
+    assert.match(v.run("document.getElementById('status-dot').className"), /error/);
+    assert.match(v.run("document.getElementById('status-note').textContent"), /stalled 5s/);
+
+    v.run('ws.readyState = 3;');
+    v.run('updatePillState(performance.now());');
+    assert.match(v.run("document.getElementById('status-dot').className"), /error/);
+    assert.equal(v.run("document.getElementById('status-note').textContent"), 'offline');
+});
+
+test('a problem state is never dimmed out of sight', () => {
+    const v = viewer();
+    // The dim timer runs constantly on a touch device, and it used to fade warnings to
+    // 0.2 opacity on black, which is invisible in practice.
+    const dimRule = html.match(/#top-pill\.dimmed \{([^}]*)\}/)[1];
+    assert.doesNotMatch(dimRule, /opacity:\s*0\.2/);
+    assert.match(html, /#top-pill\.dimmed\.has-problem \{\s*opacity:\s*1/);
+    assert.match(html, /\.dot\.warn \{[^}]*background:\s*#FBBF24/);
+    assert.match(html, /\.dot\.error \{[^}]*border-radius:\s*1px/);
 });
 
