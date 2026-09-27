@@ -1,16 +1,15 @@
 // swift-tools-version: 6.0
 //
 // Must be 6.0, not 5.8: `.iOSApplication` is a Swift 6.0 product type. Declaring 5.8
-// made SwiftPM reject the manifest at load time, so EVERY command failed - `swift build`,
-// `xcodebuild -list`, `xcodebuild build` - on every Xcode version, for every run since
-// this package was added.
+// made SwiftPM reject the manifest at load time, so every command failed regardless
+// of the Xcode version selected.
 //
-// Do NOT add `import AppleProductTypes`. That module does not exist in the Xcode 16
-// PackageDescription; the app product and its settings types come from PackageDescription
-// itself. The import is a hard error ("no such module") and it masks the real
-// diagnostics, because a manifest that fails to import never gets far enough to say
-// anything useful about its contents.
+// The app product, `AppleProductTypes` and the `PlaceholderIcon` cases are all Xcode 26
+// era SwiftPM. None of them exist in Xcode 16, which reports "Product has no member
+// 'iOSApplication'" - a toolchain problem, not a manifest problem. CI must run on
+// macos-26 / Xcode 26; see .github/workflows/ios-ci.yml.
 import PackageDescription
+import AppleProductTypes
 
 let package = Package(
     name: "OpenWinSidecar",
@@ -24,7 +23,7 @@ let package = Package(
             bundleIdentifier: "com.openwinsidecar.client",
             displayVersion: "1.0",
             bundleVersion: "1",
-            appIcon: .placeholder(icon: .app),
+            appIcon: .placeholder(icon: .display),
             accentColor: .presetColor(.blue),
             supportedDeviceFamilies: [
                 .pad,

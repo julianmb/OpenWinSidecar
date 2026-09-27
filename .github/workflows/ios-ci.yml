@@ -10,53 +10,30 @@ on:
 jobs:
   build:
     name: Compile Swift Package App + refresh distributable zip
-    # macos-15 is required, not cosmetic. Package.swift declares an `.iOSApplication`
-    # product (the Swift Playgrounds app target), which is a Swift 6 / SwiftPM feature.
-    # This job pinned Xcode 15.4 (Swift 5.10), which cannot parse that product type, so it
-    # failed on `swift build` every single run - eight consecutive failures since it was
-    # added on 2026-09-14, all of them the same toolchain mismatch.
-    runs-on: macos-15
+    # macos-26 / Xcode 26 is required, and the whole job was wrong because of it.
+    #
+    # ios/OpenWinSidecarClient/Package.swift uses `.iOSApplication`, `AppleProductTypes`
+    # and `AppIcon.PlaceholderIcon` - all Xcode 26 era SwiftPM. This job ran on macos-14
+    # with Xcode 15.4, and when I moved it to macos-15/Xcode 16 it still failed, because
+    # those APIs do not exist there either ("Product has no member 'iOSApplication'").
+    # Every one of the eight historical failures was this, not the source code.
+    runs-on: macos-26
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Select Xcode Version
-        # Xcode 16 ships the Swift 6 toolchain that understands .iOSApplication.
-        run: sudo xcode-select -s /Applications/Xcode_16.app
+        run: sudo xcode-select -s /Applications/Xcode_26.app
 
       - name: Show toolchain
         run: swift --version
 
-      # Diagnostic only. An app-only package (a single .iOSApplication product, no
-      # library) does not necessarily expose a scheme that `xcodebuild -list` will
-      # enumerate, so this step can fail on a perfectly good package. It must never
-      # block the build - it is here so the scheme list appears in the log if the
-      # build step ever needs it.
+      # Diagnostic only, and deliberately non-blocking: an app-only package (a single
+      # .iOSApplication product, no library) need not expose a scheme that
+      # `xcodebuild -list` will enumerate.
       - name: List schemes
         continue-on-error: true
         run: cd ios/OpenWinSidecarClient && xcodebuild -list || true
-
-      # TEMPORARY diagnostic. PlaceholderIcon is an Xcode-internal enum (not in the
-      # open-source PackageDescription), so the valid case names cannot be looked up
-      # from source. This probes candidates and reports any that the compiler accepts,
-      # instead of guessing one per CI run.
-      - name: Probe PlaceholderIcon cases
-        continue-on-error: true
-        run: |
-          cd ios/OpenWinSidecarClient
-          cp Package.swift /tmp/Package.swift.orig
-          for cand in app document display monitor screen device desktop laptop phone \
-                      icon placeholder custom appIcon application product package generic \
-                      default image photo symbol art displayIcon appimage; do
-            sed "s/icon: \.[A-Za-z]*/icon: .$cand/" /tmp/Package.swift.orig > Package.swift
-            out=$(swift package dump-package 2>&1 || true)
-            if ! echo "$out" | grep -q "has no member"; then
-              echo "CANDIDATE-HIT: .$cand"
-              echo "$out" | grep -E "error:" | head -2
-            fi
-          done
-          cp /tmp/Package.swift.orig Package.swift
-          echo "probe complete"
 
       - name: Build Swift Package App
         run: |
