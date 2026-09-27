@@ -21,7 +21,7 @@ let package = Package(
             bundleIdentifier: "com.openwinsidecar.client",
             displayVersion: "1.0",
             bundleVersion: "1",
-            appIcon: .placeholder(icon: .display),
+            appIcon: .placeholder(icon: .app),
             accentColor: .presetColor(.blue),
             supportedDeviceFamilies: [
                 .pad,
