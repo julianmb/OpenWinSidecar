@@ -1,106 +1,83 @@
-# Contributing to OpenWinSidecar
+# Contributing
 
-Thank you for your interest in contributing to **OpenWinSidecar**! We welcome bug reports, feature suggestions, documentation enhancements, and pull requests.
+Thanks for looking. Issues and pull requests are welcome, and reports from hardware I do not
+have are especially valuable — I test on one machine (Windows 11, Intel GPU, iPad Air) and
+cannot cover the space alone.
 
----
+## Reporting something that does not work
 
-## 🛠️ Development Setup
+The single most useful thing you can include is the viewer's own telemetry. Open the browser
+devtools console on the iPad (or Safari on the desktop) and look for the `[Stats]` line, which
+is posted every five seconds and contains the active codec, frame rates, decode-queue depth,
+latency and the renderer state. Paste that line and the problem is usually obvious.
 
-### Prerequisites
-- Windows 10 (1607+) or Windows 11
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- Visual Studio 2022 / 2025 or JetBrains Rider or VS Code with C# Dev Kit
-- (Optional for HEVC encode) Intel Arc GPU or hardware QuickSync / FFmpeg
+Also useful: the app's log file at
+`%LOCALAPPDATA%\OpenWinSidecar\logs\sidecar.log` (the **Log** panel has a *Save log…* button).
 
-### Building the Project
+## Before you open a pull request
+
 ```powershell
-git clone https://github.com/YourUsername/OpenWinSidecar.git
-cd OpenWinSidecar
 dotnet build OpenWinSidecar.slnx
+dotnet test tests/OpenWinSidecar.Service.Tests/OpenWinSidecar.Service.Tests.csproj
+node --test tests/viewer.runtime.test.cjs
 ```
 
-### Running OpenWinSidecar Service
-```powershell
-# Interactive development mode:
-dotnet run --project src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj
-```
+All three run in CI. The viewer suite executes the real `index.html` in a sandboxed VM with a
+mocked WebSocket and codec, so changes to the render loop, decode queue or input mapping are
+covered without a device.
 
----
+Two rules that have bitten this project before:
 
-## 📐 Project Structure
+- **Measure, don't assume.** Server-received fps is not presented fps; the panel decides. If you
+  claim a performance number, say what was measured and how.
+- **Don't claim features that don't exist.** A README line about a gesture or a latency figure
+  that nobody verified is worse than no line at all.
 
-- `src/OpenWinSidecar.Core`: Win32 CCD DPI engine, Virtual Display Manager, and Windows Service controller.
-- `src/OpenWinSidecar.Service`: Real-time screen capture (DXGI Desktop Duplication / GDI), hardware encoder (HEVC QSV), multi-port HTTP/WebSocket server, and input dispatcher.
-- `src/OpenWinSidecar`: WPF management dashboard and system tray interface.
-- `src/OpenWinSidecar.Cli`: Lightweight command-line utility for automation and headless status queries.
-- `drivers/VDD`: Signed IddCx Virtual Display Driver configuration and installer files.
-- `docs/`: Technical guides, architecture diagrams, and hardware benchmarks.
+## Cutting a release
 
----
+The [Release workflow](.github/workflows/release.yml) automates everything after the tag. The
+version lives in `src/OpenWinSidecar/OpenWinSidecar.csproj` (`<Version>`, which stamps the app
+assembly and the dashboard title) and in `installer/OpenWinSidecar.iss` (`MyAppVersion`, which
+drives the installer) — `VersionConsistencyTests` fails the build if they drift apart. The
+`winget/` manifests carry the previous release's version until the workflow rewrites them.
 
-## 📋 Submitting a Pull Request
-
-1. Fork the repository and create a new feature branch (`git checkout -b feature/amazing-feature`).
-2. Follow standard C# coding conventions and `.NET 10` modern idioms.
-3. Test your changes with an iPad or remote browser to ensure low-latency responsiveness.
-4. Ensure the solution compiles with `dotnet build OpenWinSidecar.slnx` with zero errors or warnings.
-5. Submit a descriptive Pull Request detailing the changes and testing results.
-
-## 🚢 Release process (maintainers)
-
-The [Release workflow](.github/workflows/release.yml) automates everything after the tag.
-The version lives in `src/OpenWinSidecar/OpenWinSidecar.csproj` (`<Version>`, which stamps
-the app assembly and the dashboard title) and in `installer/OpenWinSidecar.iss`
-(`MyAppVersion`, which drives the installer) — the `VersionConsistencyTests` fail the
-build if they drift apart.
-
-1. Bump both versions (e.g. `"0.1.1"`) and write the CHANGELOG section — its newest `##`
-   block becomes the release notes automatically.
-2. Verify locally: `dotnet test`, `node tests/viewer.runtime.test.cjs`, and one elevated
-   install/uninstall cycle of a locally compiled installer.
-3. Commit, then cut the release:
+1. Bump both versions (e.g. `"0.3.0"`) and write the CHANGELOG section. The section whose
+   heading mentions the tag becomes the release notes automatically.
+2. Verify locally: the three commands above, plus one elevated install/uninstall cycle of a
+   locally compiled installer.
+3. Commit, then tag:
    ```powershell
-   git tag v0.1.1
-   git push origin v0.1.1
+   git tag v0.3.0
+   git push origin v0.3.0
    ```
-4. The workflow runs the tests, publishes the self-contained single file, compiles the
-   installer with Inno Setup, **smoke-tests the silent install on the runner** (catches
-   hangs and dialogs before shipping — the three winget-pkgs validation failures that
-   taught us this are in the CHANGELOG), creates the GitHub Release with the asset +
-   SHA-256, rewrites the `winget/` manifests, and **opens the winget-pkgs submission PR
-   automatically** (requires the `WINGET_PAT` secret — see
-   [winget/README.md](winget/README.md)).
-5. Re-running the workflow for the same tag is safe (idempotent): it re-uploads the
-   asset, re-runs the smoke test, and updates the existing winget PR. A manual "Run
-   workflow" with the **dry_run** checkbox builds everything (including the smoke test)
-   without publishing.
-
----
+4. The workflow runs the tests, publishes the self-contained single file, compiles the installer
+   with Inno Setup, **smoke-tests the silent install on the runner** (this is what caught the
+   winget-pkgs validation failures — see the CHANGELOG), creates the GitHub Release with the
+   asset and its SHA-256, rewrites the `winget/` manifests, and **opens the winget-pkgs
+   submission PR automatically** (needs the `WINGET_PAT` secret — see [winget/README.md](winget/README.md)).
+5. The tag and the version must agree; the workflow fails early and tells you which one to
+   change if they do not.
+6. Re-running for the same tag is mostly idempotent — it re-uploads the asset, re-runs the smoke
+   test and updates the existing winget PR. Note that it rebuilds the installer, so the SHA-256
+   changes and any already-merged winget manifest becomes stale.
 
 ## 🔏 Code signing
 
-The installer is **not** code-signed, so Windows SmartScreen may show "Windows protected
-your PC." Users choose **More info → Run anyway** after verifying the SHA-256 hash in the
-release notes:
+The installer is **not** code-signed, so SmartScreen may warn. The signing step activates
+automatically once a `SIGNING_CERT_THUMBPRINT` secret is configured, and the release notes
+publish the hash either way:
 
 ```powershell
-Get-FileHash .\OpenWinSidecar-Setup-0.1.1.exe -Algorithm SHA256
+Get-FileHash .\OpenWinSidecar-Setup-0.3.0.exe -Algorithm SHA256
 ```
 
-### Adding signing later (optional)
+## Security
 
-The release workflow has a conditional **Sign installer** step that runs when the
-`SIGNING_CERT_THUMBPRINT` secret is set. To enable:
+Please do not open a public issue for a security problem. See [SECURITY.md](SECURITY.md) for
+how to report one and for the threat model — in particular, the server is unauthenticated
+unless you set an access password.
 
-1. Obtain a code signing certificate (OV ~$100–200/yr, or
-   [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) ~$10/mo).
-   EV certs (~$300–400/yr) additionally bypass SmartScreen entirely.
-2. Install the cert in the Windows certificate store (Local Machine → Personal).
-3. Add the cert thumbprint as a repo secret named `SIGNING_CERT_THUMBPRINT`
-   (Settings → Secrets and variables → Actions).
-4. The next release will sign the installer before hashing — no other changes needed.
+## License
 
----
-
-## 📄 License
-By contributing to OpenWinSidecar, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0](LICENSE).
+By contributing you agree that your contribution is licensed under the
+[AGPL-3.0](LICENSE), the same terms as the project.

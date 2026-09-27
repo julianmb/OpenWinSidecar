@@ -1,10 +1,47 @@
 # Future Work & Deferred Decisions
 
-> _Last updated: 2026-09-12_
+> _Last updated: 2026-09-27_
 
 This document tracks improvements that were prototyped, evaluated, or consciously deferred —
 with the reasoning, so the next contributor doesn't repeat a dead end. Items are ordered by
 how actionable they are.
+
+---
+
+## 0b. Resolved 2026-09-27 — do not re-investigate
+
+- **The iPad's "Quality" and "Display Scale" buttons were dead.** v0.2.0 moved stream settings to
+  the desktop, and the server has refused `quality:`/`dpi:`/`fps:`/`zoom:` since — but the
+  `IsHostSettingCommand` early return also made the handlers for them unreachable, and neither
+  client was told. Every one of those buttons silently did nothing. The handlers are now deleted
+  and the server answers `hostset`; the iOS app explains where those settings live instead of
+  offering a no-op.
+- **"JPEG (no hardware encoder)" was an unmeasured default, not a diagnosis.**
+  `SelectedEncoderName` is `SelectedDisplayName ?? "JPEG (no hardware encoder)"`, and the profile
+  is only chosen by a one-frame probe that runs *when a client connects*. With nobody connected
+  the panel printed the fallback string as if it were a result. Measured against the run log:
+  8 runs selected Intel QuickSync and 411 keyframe AUs were delivered over HEVC, against 1 JPEG
+  fallback frame. The panel now distinguishes "not verified yet" from "unavailable".
+- **Unbounded WebSocket reassembly.** The fragmented-message buffer was an uncapped `List<byte>`;
+  endless `FIN=0` frames grew the host heap until it died. The 64-bit frame length was also cast
+  to `int` unchecked, producing a negative `frameEnd` that passed the partial-frame guard.
+  Both now raise a protocol error and drop the session (16 KB ceiling).
+- **A split HTTP request bypassed the origin check.** The request was parsed from a single
+  `ReadAsync`; anything after the first TCP segment — including `Origin` — was treated as
+  absent, and absent meant allowed. Now reads to `\r\n\r\n` with a size cap and a deadline.
+  Verified live: a request split mid-headers with a foreign `Origin` now returns 403.
+- **`Dispatcher.Invoke` from the capture threads** stalled the producer on every UI rebuild
+  (~1/s), which the iPad saw as a periodic network gap. Now `BeginInvoke`.
+- **`image-rendering: pixelated` was the default**, so a 2360×1640 desktop downscaled into a
+  ~700px element was nearest-neighbour sampled and remote text shimmered. Nearest-neighbour is
+  now opt-in, applied only when enlarging.
+- **The virtual keyboard typed every character twice** — once as `key:text`, once as a raw
+  `key:down`/`key:up` pair from the document handlers.
+- **Stretch mode mis-mapped every click.** The letterbox insets were applied to an image that
+  fills the element, so taps landed on whatever was at the offset position.
+- **The dashboard was unreachable on short screens.** Fixed 750 DIPs, `NoResize`, maximize
+  stripped, centred against the full screen height rather than the work area: on 1366×768 at
+  125% scaling the Advanced section and log preview sat below the visible area.
 
 ---
 

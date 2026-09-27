@@ -236,7 +236,9 @@ public final class VideoPipeline {
                 // is its primary signal for diagnosing decoder problems on a given device,
                 // and the native client was only ever sending a bare `forceidr`, so every
                 // iOS-native failure looked like silence in the host log.
-                self.onDecodeError?(OSStatus(status))
+                // `status` is already an OSStatus; pass it straight through rather than
+                // re-wrapping it.
+                self.onDecodeError?(status)
                 if self.consecutiveDecodeErrors >= 3 {
                     self.consecutiveDecodeErrors = 0
                     self.onSessionRecoveryNeeded?()

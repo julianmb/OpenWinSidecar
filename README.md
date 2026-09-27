@@ -1,115 +1,165 @@
-# OpenWinSidecar (.NET 10 LTS)
+# OpenWinSidecar
 
-An open-source, ultra-low latency, hardware-accelerated virtual monitor server, management dashboard, and CLI replacement for **spacedesk** designed for iPads, tablets, and remote displays.
+I wanted to use my iPad as a second screen for my PC. The options that exist are subscription
+services, or remote-desktop apps that feel like driving a car through a letterbox. So I built
+the thing I wanted instead: a Windows virtual display, streamed to Safari on an iPad as
+hardware-encoded HEVC, with touch and keyboard input going back the other way.
 
----
+No client app. No account. No subscription. Open a URL in Safari and it works.
 
-## 🚀 Core Features
-
-- **⚡ Intel Arc GPU Hardware HEVC (H.265) Encoding**:
-  - Encodes 60 FPS video via Intel QuickSync (`hevc_qsv`) in **~3.5 ms**.
-  - High fidelity dynamic bitrate scaling: **80% Default (8 Mbps)** and **90% Ultra-Crisp (12 Mbps)**.
-  - Low bandwidth (~1 MB/s), saving over 90% network traffic compared to JPEG intra-frames.
-- **🎮 Zero-Copy Direct3D 11 GPU Capture**:
-  - DirectX Desktop Duplication (`IDXGIOutputDuplication`) captures directly from Intel Arc GPU VRAM in **< 0.5 ms**.
-  - Zero GDI overhead, zero CPU memory thrashing, and automatic GDI fallback.
-- **📱 Native Apple Silicon WebCodecs Decoding & Zero-Buffer Latency**:
-  - Decoded in hardware by iPad Apple Silicon (`VideoDecoder`, `optimizeForLatency: true`) in **~1.5 ms**.
-  - Direct canvas framebuffer presentation with `desynchronized: true` (bypasses Safari compositor lag).
-  - Total glass-to-glass latency: ⚡ **~7 – 10 ms**.
-- **🖥️ Live Windows Display DPI Scaling from the Web**:
-  - Integrated Win32 CCD API (`DisplayConfigSetDeviceInfo`) allows changing Windows Display Scale (**100% to 225%**) directly from the iPad browser settings menu.
-  - Native ClearType sub-pixel font rendering with zero distortion.
-- **📐 Mathematical Aspect-Ratio Lock & Auto Device Detection**:
-  - Auto-detects device screen resolution, orientation, and `@2x` Retina device pixel ratio.
-  - Locks aspect ratio (`scaleX == scaleY`) to eliminate stretching across both browser windowed and fullscreen modes.
-  - Complete matrix of native and `@2x` logical resolutions for every iPad generation (10.9", 11" M4, 13" M4, 12.9", 10.2", 9.7", 8.3" Mini).
-- **🌐 Multi-Port Web Server (Ports 80, 8080, 28252)**:
-  - Serves the WebCodecs HTML5 client directly over HTTP / WebSockets.
-  - Simply open `http://<HOST_IP>:8080` or `http://<HOST_IP>` in iPad Safari.
-- **📱 PWA & Standalone Fullscreen Web App**:
-  - Supports iOS "Add to Home Screen" for a borderless, native app experience without browser navigation bars.
-  - Screen WakeLock integration prevents iPad display from dimming or sleeping.
-- **✍️ Ultra-Smooth Input & Gestures**:
-  - Single-finger mouse/touch with `requestAnimationFrame` event batching for zero input jitter.
-  - Two-finger scrolling and pinch gestures.
-  - Full hardware keyboard forwarding and mobile virtual keyboard support.
+![The OpenWinSidecar dashboard](docs/screenshots/dashboard.png)
 
 ---
 
-## 📦 Solution Architecture
+## What it actually does
+
+- **Creates a real virtual monitor** on Windows via an IddCx driver, so Windows treats it as a
+  second display — you can drag windows onto it, set its resolution and refresh rate, and pick
+  it per-app.
+- **Streams it as hardware HEVC** (H.265) through Intel QuickSync, decoded in hardware by the
+  iPad's Apple Silicon. No transcode, no CPU.
+- **Sends touch, clicks, scroll, right-click and keyboard back**, including the iPad's virtual
+  keyboard.
+- **Ships as a Windows installer** and is on winget.
+
+There is deliberately **no audio**. If something plays on the PC, the iPad stays silent.
+
+---
+
+## Measured performance
+
+I would rather show you numbers I actually measured than round ones. These are from an iPad Air
+on the same Wi-Fi, streaming a 2360×1640 virtual display, with the encoder tuned for fluidity
+over sharpness:
+
+| | |
+|---|---|
+| Glass-to-glass latency | **~65 ms flat** (was ~150 ms with spikes to 1.4 s before tuning) |
+| Presented frame rate | **40–46 fps** on motion, 60 fps windows on a static desktop |
+| Encoder bitrate | ~10 Mbps at 2360×1640 |
+| Capture | DirectX Desktop Duplication, GPU-side, with a GDI fallback |
+| Codec | HEVC / `hevc_qsv`, 8-bit or 10-bit |
+
+Two honest caveats:
+
+- **Presented fps is not received fps.** The server can push 55+ fps that the panel never shows.
+  Every number above is what the iPad actually painted.
+- **I have only tested this on Intel.** NVENC and AMD AMF support is written but unvalidated —
+  I have no hardware to test it on. If you have one, I would genuinely like a report.
+
+---
+
+## Tested configuration
+
+| | |
+|---|---|
+| Host | Windows 11, Intel GPU with QuickSync (tested on Arc) |
+| Client | iPad Air (4th/5th gen) and iPad Pro, Safari |
+| Network | Same Wi-Fi, 5 GHz preferred |
+| Permissions | **Administrator required** — the display driver and GPU capture both need it |
+
+**It has not been tested on AMD or NVIDIA GPUs, on Windows 10, or on any browser other than
+Safari.** If you try it on something else and it works — or does not — please
+[open an issue](https://github.com/julianmb/OpenWinSidecar/issues). I am one person with one
+test rig, and community testing on other hardware is genuinely how this gets better.
+
+---
+
+## Install
+
+**From winget** (recommended):
+
+```powershell
+winget install Julianmb.OpenWinSidecar
+```
+
+**Manually:** download `OpenWinSidecar-Setup-<version>.exe` from the
+[releases page](https://github.com/julianmb/OpenWinSidecar/releases), verify the SHA-256 in the
+release notes, and run it. The installer is not code-signed, so SmartScreen will warn — choose
+**More info → Run anyway** after checking the hash.
+
+Then install FFmpeg, which is what drives the hardware encoder:
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+Without FFmpeg the app still works, but it falls back to JPEG at several times the bitrate, and
+the dashboard will tell you so.
+
+Launch it, leave the display on, and open the URL it shows (or scan the QR code) in Safari on
+your iPad. **Share → Add to Home Screen** gives you a borderless app with no browser chrome —
+that is the intended way to use it.
+
+> Set an access password from the dashboard before using this on any network you do not fully
+> control. See [SECURITY.md](SECURITY.md) — by default the server is open to your LAN.
+
+---
+
+## Building from source
+
+```powershell
+git clone https://github.com/julianmb/OpenWinSidecar
+cd OpenWinSidecar
+dotnet build OpenWinSidecar.slnx
+dotnet test tests/OpenWinSidecar.Service.Tests/OpenWinSidecar.Service.Tests.csproj
+node --test tests/viewer.runtime.test.cjs
+& src\OpenWinSidecar\bin\Debug\net10.0-windows\OpenWinSidecar.exe   # run elevated
+```
+
+Requires the .NET 10 SDK and Node (for the viewer tests).
+
+---
+
+## How it fits together
 
 ```
 OpenWinSidecar/
-├── OpenWinSidecar.slnx
 ├── src/
-│   ├── OpenWinSidecar.Core/          # Windows Display API, CCD DPI Engine, Virtual Display Manager
-│   │   ├── Services/WindowsDpiService.cs       # Win32 DisplayConfigSetDeviceInfo DPI engine
-│   │   └── Services/VirtualDisplayManager.cs   # IddCx driver manager & topology extension
-│   ├── OpenWinSidecar.Service/       # High-performance Streaming Server & Capture Engine
-│   │   ├── Capture/DxgiCaptureService.cs       # Direct3D 11 Desktop Duplication GPU capture
-│   │   ├── Capture/ScreenCaptureService.cs     # GDI fallback & watermark compositor
-│   │   ├── Encoding/HevcStreamEncoder.cs       # Vendor-abstracted HEVC encoder (Intel QSV / NVIDIA NVENC / AMD AMF via FFmpeg)
-│   │   ├── Input/InputDispatcher.cs            # Win32 SendInput mouse & keyboard dispatcher
-│   │   └── Protocol/SidecarTcpServer.cs        # Multi-port HTTP/WebSocket server & HTML5 client
-│   ├── OpenWinSidecar/               # WPF Management Dashboard & System Tray
-│   └── OpenWinSidecar.Cli/           # Command-Line Automation Tool
-├── drivers/VDD/                     # Signed IddCx Virtual Display Driver (ROOT\DISPLAY\0000)
-│   └── vdd_settings.xml             # Complete iPad native and logical resolution matrix
-├── docs/                            # Comprehensive technical documentation & handovers
-└── README.md
+│   ├── OpenWinSidecar.Core/      # IddCx driver management, display topology, settings
+│   ├── OpenWinSidecar.Service/   # capture, HEVC encoding, HTTP/WebSocket server, viewer
+│   ├── OpenWinSidecar/           # WPF dashboard + tray app  ← start here
+│   └── OpenWinSidecar.Cli/       # command-line control
+├── drivers/VDD/                  # signed IddCx virtual display driver
+├── installer/                    # Inno Setup script
+├── ios/                          # optional native Swift client (compiles in CI, unverified)
+├── winget/                       # winget-pkgs manifests
+└── docs/                         # architecture, troubleshooting, release operations
 ```
 
----
+The viewer is a single self-contained `index.html` served from the app — no build step, no
+framework, no bundler. It uses WebCodecs, which is why Safari and a secure context matter.
 
-## 🏃 Running the Server
-
-### 1. Interactively / Development Mode:
-```powershell
-# Build and run OpenWinSidecar Service
-dotnet build "src/OpenWinSidecar.Service/OpenWinSidecar.Service.csproj"
-& "src/OpenWinSidecar.Service/bin/Debug/net10.0-windows/OpenWinSidecar.Service.exe"
-```
-
-### 2. Connect from iPad:
-1. Ensure your iPad is on the same local Wi-Fi network.
-2. Open Safari and navigate to:
-   ```
-   http://192.168.1.12:8080
-   ```
-   *(or `http://192.168.1.12`)*
-3. Tap **Share (⬆️) → Add to Home Screen** to install OpenWinSidecar as a borderless, full-screen app.
+See [docs/](docs/) for architecture, network and discovery notes, troubleshooting, and how
+releases work.
 
 ---
 
-## ⚙️ Stream Settings
+## Things I know are missing
 
-Stream settings live in the **Windows dashboard** (desktop app), which is
-authoritative: display target, stream FPS (30/60, default 60), quality, codec
-(HEVC or JPEG), color depth (8/10-bit), and magnification. The iPad viewer keeps
-only iPad-local controls (fullscreen, keyboard, cursor mode, aspect fit) and a
-settings modal with the AGPL source link. Dashboard changes reconnect viewers
-automatically.
+Rather than have you find out:
 
----
+- **No zoom.** Small text on the remote screen is hard to read and there is no pinch or
+  magnifier. This is the biggest gap.
+- **No audio.**
+- **No clipboard sync** — you can type into the PC but cannot copy text back out.
+- **No way to get text off the remote screen** at all.
+- **Only Intel is validated.** NVENC/AMF are written but untested.
+- **The native iOS app is unverified.** It compiles in CI; I do not recommend it over Safari.
+- **No TLS.** Traffic is plain HTTP, so do not use this on an untrusted network.
 
-## 🛠️ CLI Management
-
-```powershell
-# Check service status, active connections, and network endpoints
-dotnet run --project src/OpenWinSidecar.Cli -- status
-
-# List connected client screens and display parameters
-dotnet run --project src/OpenWinSidecar.Cli -- clients
-
-# Manage service lifecycle
-dotnet run --project src/OpenWinSidecar.Cli -- start
-dotnet run --project src/OpenWinSidecar.Cli -- stop
-dotnet run --project src/OpenWinSidecar.Cli -- restart
-```
+`docs/future-work.md` tracks all of this, including the things I tried that did not work.
 
 ---
 
-## 📄 License
+## Contributing
 
-GNU Affero General Public License v3.0 (see `gh/LICENSE` — the `gh/` tree is the published project).
+Issues and pull requests are welcome — especially reports from hardware I do not have. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the release process.
+
+## License
+
+GNU Affero General Public License v3.0. See [LICENSE](LICENSE).
+
+The viewer links back here under AGPL §13. If you modify it and let others use it over a
+network, you owe them your source — that is the deal, and I am fine with it.

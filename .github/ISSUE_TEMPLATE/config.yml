@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/julianmb/OpenWinSidecar/security/advisories/new
+    about: Please report privately — do not open a public issue.
+  - name: Question or discussion
+    url: https://github.com/julianmb/OpenWinSidecar/discussions
+    about: Usage questions, hardware compatibility, ideas.
