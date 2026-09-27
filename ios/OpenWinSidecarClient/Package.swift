@@ -37,6 +37,12 @@ let package = Package(
             ]
         )
     ],
+    targets: [
+        .executableTarget(
+            name: "AppModule",
+            path: "."
+        )
+    ],
     // Compile as Swift 5. Declaring tools-version 6.0 opts the whole package into the
     // Swift 6 language mode, where strict concurrency is enforced: the existing
     // UIViewRepresentable update closures that hand `self` to the connection are reported
@@ -44,11 +50,7 @@ let package = Package(
     // was written against Swift 5 semantics and has not been concurrency-audited, so pin
     // the language mode rather than pretending it has been. Auditing it properly is real
     // work and belongs with someone who can test on a device.
-    swiftLanguageModes: [.v5],
-    targets: [
-        .executableTarget(
-            name: "AppModule",
-            path: "."
-        )
-    ]
+    //
+    // Must come after `targets` - Package.init validates argument order.
+    swiftLanguageModes: [.v5]
 )
