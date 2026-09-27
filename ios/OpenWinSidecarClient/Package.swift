@@ -1,13 +1,16 @@
 // swift-tools-version: 6.0
 //
-// Must be 6.0, not 5.8. The manifest uses `import AppleProductTypes` and the
-// `.iOSApplication` product (with appIcon / accentColor / capabilities), all of
-// which are Swift 6.0 features. Declaring 5.8 made SwiftPM reject the manifest at
-// load time, so EVERY command failed - `swift build`, `xcodebuild -list`,
-// `xcodebuild build` - on every Xcode version, for every run since this package
-// was added. The CI job was red for two weeks over this one line.
+// Must be 6.0, not 5.8: `.iOSApplication` is a Swift 6.0 product type. Declaring 5.8
+// made SwiftPM reject the manifest at load time, so EVERY command failed - `swift build`,
+// `xcodebuild -list`, `xcodebuild build` - on every Xcode version, for every run since
+// this package was added.
+//
+// Do NOT add `import AppleProductTypes`. That module does not exist in the Xcode 16
+// PackageDescription; the app product and its settings types come from PackageDescription
+// itself. The import is a hard error ("no such module") and it masks the real
+// diagnostics, because a manifest that fails to import never gets far enough to say
+// anything useful about its contents.
 import PackageDescription
-import AppleProductTypes
 
 let package = Package(
     name: "OpenWinSidecar",
