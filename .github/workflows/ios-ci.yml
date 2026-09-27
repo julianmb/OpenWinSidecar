@@ -36,6 +36,28 @@ jobs:
         continue-on-error: true
         run: cd ios/OpenWinSidecarClient && xcodebuild -list || true
 
+      # TEMPORARY diagnostic. PlaceholderIcon is an Xcode-internal enum (not in the
+      # open-source PackageDescription), so the valid case names cannot be looked up
+      # from source. This probes candidates and reports any that the compiler accepts,
+      # instead of guessing one per CI run.
+      - name: Probe PlaceholderIcon cases
+        continue-on-error: true
+        run: |
+          cd ios/OpenWinSidecarClient
+          cp Package.swift /tmp/Package.swift.orig
+          for cand in app document display monitor screen device desktop laptop phone \
+                      icon placeholder custom appIcon application product package generic \
+                      default image photo symbol art displayIcon appimage; do
+            sed "s/icon: \.[A-Za-z]*/icon: .$cand/" /tmp/Package.swift.orig > Package.swift
+            out=$(swift package dump-package 2>&1 || true)
+            if ! echo "$out" | grep -q "has no member"; then
+              echo "CANDIDATE-HIT: .$cand"
+              echo "$out" | grep -E "error:" | head -2
+            fi
+          done
+          cp /tmp/Package.swift.orig Package.swift
+          echo "probe complete"
+
       - name: Build Swift Package App
         run: |
           cd ios/OpenWinSidecarClient
