@@ -3,6 +3,140 @@
 Every change to this project is documented here: **what** was changed, **why**, and **how it was verified**. New entries go at the top. The commit history (`git log`) carries the same explanations per commit; this file is the human-readable narrative.
 
 ---
+## 2026-09-27 — Protocol hardening, viewer/desktop fixes, release pipeline unblocked
+
+Not yet released (no tag). Four parallel audits of the capture path, the protocol,
+the viewer, the desktop app, the security posture and the CI/release automation
+produced the batch below. Tests: 122 .NET (+5) and 39 viewer (+10), all green.
+
+### Stream protocol
+
+- **Request-head read loop.** The HTTP request was parsed from a single `ReadAsync`.
+  TCP segmentation routinely splits a request, and anything after the first segment
+  (`Sec-WebSocket-Key`, `Origin`, even the path) was treated as absent — which for
+  `Origin` means "allowed". Now reads to the `\r\n\r\n` terminator, capped at 16 KB
+  with a 10 s deadline.
+- **Bounded fragmented messages.** The WebSocket reassembly buffer was an uncapped
+  `List<byte>`, so a client sending endless `FIN=0` continuation frames grew the host
+  heap until it died. The 64-bit frame length was also cast to `int` unchecked, turning
+  a large length into a negative `frameEnd` that slipped past the partial-frame guard.
+  Both now raise a protocol error and drop the session. Ceiling is 16 KB.
+- **Input rate limiting.** `input:`/`key:`/`scroll:`/`rightclick` are now budgeted at
+  400/s (burst 200) and `key:text` is capped at 256 characters. `key:text` costs two
+  `SendInput` syscalls per character, so one 64 KB message was ~32 000 calls in a burst.
+- **Bounded concurrency.** Sessions capped at 16; the handshake has a deadline.
+  Previously every accepted socket cost a task, a buffer and eventually a sink.
+- **Kick can now abort a blocked send.** The consumer loop waited on the session token
+  but sent with the server-lifetime token.
+- **iOS zip is token-gated and cached**, and a hardcoded developer path
+  (`C:\Users\JulianB\...`) was deleted from shipped source.
+- **Deleted dead code.** The `IsHostSettingCommand` guard made the `display:`/`fps:`/
+  `quality:`/`set_res:`/`dpi:`/`zoom:`/`mode:` handlers unreachable since v0.2.0. They
+  are removed, and the server now answers `hostset` so a client greys out the control
+  instead of silently failing — which is why the iOS app's Quality and Display Scale
+  buttons had been doing nothing at all.
+
+### Viewer
+
+- **Resampling.** `image-rendering: pixelated` was the base canvas rule, so a
+  2360×1640 desktop downscaled into a ~700 px element was nearest-neighbour sampled
+  and remote text shimmered. Nearest-neighbour is now opt-in and applied only when
+  the image is being enlarged.
+- **WebGL context loss is recoverable.** iOS reclaims GPU memory under pressure; with
+  only `preventDefault()` the canvas stayed black for the rest of the session while
+  telemetry reported healthy fps over a dead display. Resources are rebuilt on
+  `webglcontextrestored`, and frames skipped while lost are counted.
+- **The virtual keyboard no longer double-types.** Each character was sent as
+  `key:text` *and* as a raw `key:down`/`key:up` pair from the document handlers.
+- **Stretch mode maps taps correctly.** The letterbox insets were applied to an image
+  that fills the element, landing clicks on a different app.
+- **Safe-area insets on the container**, so the notch / home indicator no longer
+  overlaps the stream or eats a strip of tap targets.
+- **Wake lock is re-acquired** when the OS releases it, so the iPad no longer dims
+  mid-session and stays dimmed.
+- **Reconnect backs off** exponentially with jitter and shows the attempt count,
+  instead of hammering the host once a second forever.
+- **Wheel deltas** are normalised out of line/page delta modes.
+- **Telemetry is honest**: active codec, colour depth, DPR, viewport, orientation,
+  renderer and wake-lock state are shipped, and `droppedRenderCount` is now actually
+  incremented.
+
+### Desktop app
+
+- `Dispatcher.Invoke` → `BeginInvoke` for the streaming/service state callbacks and
+  the log window. Those fire from the capture threads, and a blocking `Invoke` stalled
+  the producer on every UI rebuild — a periodic gap the iPad could see.
+- The 3 s refresh timer can no longer overlap itself.
+- **The window is reachable on small screens.** It was `NoResize` with maximize
+  stripped, 750 DIPs fixed, centred against the full screen height rather than the work
+  area. On a 1366×768 laptop at 125 % scaling the Advanced section and log preview were
+  below the visible area with no way to scroll to them. Now resizable, maximizable, and
+  clamped to the work area.
+- **Crash handlers actually prevent the crash.** They wrote a log and then let the
+  process die; now handled/observed, with a notice.
+- **`EnableVirtualDisplayAndStartService` no longer lies.** It reported success and set
+  `IsVirtualDisplayActive` regardless of whether the driver step worked. It still
+  starts the stream (a device that is already enabled needs no successful enable
+  command, and the host is often launched unelevated) but reports the failure.
+- **The missing-driver state has a recovery path.** The card disabled its only button
+  and said "reinstall OpenWinSidecar", while the repair handler existed with nothing
+  wired to it.
+- **Client rows show frame age**, so a connected-but-stalled client no longer looks
+  identical to a healthy one, and the sparkline is fed by the best *presenting* client
+  rather than `Max(Fps)` (which decayed to a flat zero and read as "performance
+  dropped" instead of "a client stopped").
+- Log window: **Save log…**, so filing a bug report doesn't require a screenshot.
+
+### Release pipeline (four bugs that would have broken the next tag)
+
+- **Signing could never run.** The step gated on `env.SIGNING_CERT_THUMBPRINT != ''`
+  while defining that env at *step* level, which is not in scope for the same step's
+  `if:`. With the secret set, the condition was always empty and signing was silently
+  skipped — while `CONTRIBUTING.md` and `docs/release-operations.md` both promise it
+  activates. Hoisted to job-level env.
+- **Release notes showed the wrong section.** The regex took the first `##` heading in
+  `CHANGELOG.md` — the repository-housekeeping entry — so v0.2.0 shipped internal
+  housekeeping as its release body. Now matched against the tag.
+- **Tag and version were never reconciled.** The trigger accepts any `v*`, so tagging
+  `v0.2.1` with the `.iss` still at `0.2.0` would have published 0.2.0 binaries under
+  the v0.2.1 tag and written a winget manifest whose `PackageVersion` disagreed with its
+  URL. Now a hard gate.
+- **The winget PR deleted already-published versions.** It removed every directory under
+  the package path on a branch based on `upstream/master`, proposing deletion of
+  merged manifests — wingetbot would reject it. Now only the target version is replaced.
+- The winget PAT no longer sits in the clone URL (it was persisted in `.git/config`).
+
+### CI and repository
+
+- The **viewer runtime suite ran in no workflow at all** — 39 cases over the embedded
+  WebCodecs viewer, documented only as a manual step. Added a job.
+- The **`.iss` was only compiled on a tag**, so a broken installer script would ship
+  after the version bump was already public. Added a compile job.
+- `.gitignore` had **unanchored `x64/` and `x86/`** patterns, which match at any depth
+  and so excluded `drivers/VDD/control/SignedDrivers/x86/**` — exactly the payload the
+  installer devcon-installs. It survived only because it predated the pattern; a
+  refreshed driver set would have silently vanished. Anchored.
+- Added `.gitattributes` (so the signed driver payload is never line-ending mangled and
+  the `.iss`/`.bat` stay CRLF), `SECURITY.md` with an explicit threat model, and
+  dependabot for NuGet and GitHub Actions.
+- **The published repository root was the development tree.** It contained the dev
+  `tools/`, internal handover notes, and a second full copy of the source under `gh/`,
+  while CI ran against a tree nothing verified. Cause: `publish_gh.ps1` used
+  `robocopy /E`, so anything removed from the mirror stayed on GitHub forever. Now
+  `/MIR` with a preflight that refuses to publish an incomplete or contaminated
+  mirror, and a `-DryRun` mode. `sync_gh_mirror.ps1` gained a `-Verify` mode that
+  fails on drift.
+
+### Known limitation (unchanged)
+
+- The server is **unauthenticated unless an access password is configured**, and
+  traffic is plain HTTP. This is now documented in `SECURITY.md` with a hardening
+  checklist rather than left implicit. Setting a password on first run is the obvious
+  next step; it is a behaviour change for existing users, so it has not been forced.
+- Non-HTTPS remains a hard constraint for the web viewer (WebCodecs needs a secure
+  context), so TLS termination would require a different client story.
+
+---
 ## 2026-09-21 — v0.2.0 shipped; repository history cleaned (68 MB → 1.1 MB); CI unblocked
 
 - **v0.2.0 is live.** The Release workflow ran end-to-end green for the first
