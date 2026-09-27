@@ -27,8 +27,14 @@ jobs:
       - name: Show toolchain
         run: swift --version
 
+      # Diagnostic only. An app-only package (a single .iOSApplication product, no
+      # library) does not necessarily expose a scheme that `xcodebuild -list` will
+      # enumerate, so this step can fail on a perfectly good package. It must never
+      # block the build - it is here so the scheme list appears in the log if the
+      # build step ever needs it.
       - name: List schemes
-        run: cd ios/OpenWinSidecarClient && xcodebuild -list
+        continue-on-error: true
+        run: cd ios/OpenWinSidecarClient && xcodebuild -list || true
 
       - name: Build Swift Package App
         run: |
