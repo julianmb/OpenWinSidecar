@@ -33,6 +33,11 @@ public partial class MainWindow : Window
     private readonly bool _autoStartRequested;
     private bool _refreshing;
 
+    /// <summary>True once any client has connected since launch. Distinguishes "the encoder
+    /// was never probed because nobody was watching" from "the encoder was probed and no
+    /// hardware encoder exists" - the two look identical if you only read the profile.</summary>
+    private bool _anyClientSeenThisRun;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -555,13 +560,23 @@ public partial class MainWindow : Window
         // card directly above already shows the first two (with the same text) and the
         // clients card below shows the third. Repeating them meant the same fact had to
         // be kept in sync in three places.
-        TxtSessionEncoder.Text = _streamingHost.IsRunning
-            ? OpenWinSidecar.Service.Encoders.HevcStreamEncoder.SelectedEncoderName
-            : "—";
         TxtSessionUptime.Text = _streamingHost.IsRunning
             ? FormatUptime(DateTime.UtcNow - Process.GetCurrentProcess().StartTime.ToUniversalTime())
             : "—";
         SessionCard.Visibility = _streamingHost.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+
+        if (clients.Count > 0) _anyClientSeenThisRun = true;
+
+        // The encoder name is only meaningful once a client has forced the probe. Before
+        // that it returns a hardcoded "JPEG (no hardware encoder)" default, which is what
+        // made an idle-but-healthy install look like it had silently fallen back to JPEG.
+        TxtSessionEncoder.Text = !_streamingHost.IsRunning
+            ? "—"
+            : OpenWinSidecar.Service.Encoders.HevcStreamEncoder.HardwareEncoderActive
+                ? OpenWinSidecar.Service.Encoders.HevcStreamEncoder.SelectedEncoderName
+                : _anyClientSeenThisRun
+                    ? "JPEG (no hardware encoder)"
+                    : "Not verified yet";
 
         // Make the selected codec agree with the encoder actually in use. Without this the
         // panel claimed "HEVC (Recommended)" while the session row reported "JPEG (no
@@ -583,30 +598,58 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Reflects encoder availability in the codec dropdown itself, so the setting and the
-    /// session row never disagree. HEVC needs FFmpeg plus a hardware encoder; when either
-    /// is missing the stream silently falls back to JPEG, which used to look like the
-    /// setting had been ignored rather than like it being unavailable.
+    /// session row never disagree.
+    ///
+    /// The subtlety that matters: the hardware profile is only chosen by a one-frame probe
+    /// encode, which runs when a client connects. Before any client has ever connected,
+    /// "no profile selected" means NOT YET MEASURED, not "unavailable". Reading it as a
+    /// failure made the panel claim "HEVC (unavailable - using JPEG)" on a perfectly
+    /// healthy install that simply had nobody watching yet - and, before this, the Session
+    /// row printed "JPEG (no hardware encoder)" for the same reason.
     /// </summary>
     private void UpdateCodecItemLabels()
     {
         // The FFmpeg banner is the existing source of truth for "the HEVC dependency is
         // missing", so reuse it rather than probing the PATH a second time.
         bool ffmpegMissing = FfmpegBanner.Visibility == Visibility.Visible;
-        bool hevcAvailable = !ffmpegMissing && OpenWinSidecar.Service.Encoders.HevcStreamEncoder.HardwareEncoderActive;
+        bool profileSelected = OpenWinSidecar.Service.Encoders.HevcStreamEncoder.HardwareEncoderActive;
         bool hevcSelected = CmbStreamCodec.SelectedIndex == 0;
 
-        CmbCodecHevc.Content = hevcAvailable
-            ? "HEVC (Recommended)"
-            : "HEVC (unavailable - using JPEG)";
-        CmbCodecJpeg.Content = hevcAvailable ? "JPEG" : "JPEG (fallback)";
+        if (ffmpegMissing)
+        {
+            CmbCodecHevc.Content = "HEVC (unavailable - FFmpeg not found)";
+            CmbCodecJpeg.Content = "JPEG (fallback)";
+            CmbStreamCodec.ToolTip = "Hardware HEVC needs FFmpeg, which was not found on this "
+                + "machine, so the stream falls back to JPEG. The banner at the top can install it.";
+            return;
+        }
 
-        CmbStreamCodec.ToolTip = !ffmpegMissing && !hevcSelected
-            ? "JPEG fallback. Lower latency, much higher bandwidth, softer text."
-            : hevcSelected
-                ? (ffmpegMissing
-                    ? "HEVC is unavailable: FFmpeg was not found, so the stream is falling back to JPEG."
-                    : "HEVC is unavailable: no hardware encoder was detected, so the stream is falling back to JPEG.")
-                : "Hardware HEVC end to end. The viewer needs a browser that supports HEVC.";
+        if (profileSelected)
+        {
+            CmbCodecHevc.Content = "HEVC (Recommended)";
+            CmbCodecJpeg.Content = "JPEG";
+            CmbStreamCodec.ToolTip = "Hardware HEVC end to end. The viewer needs a browser that supports HEVC.";
+            return;
+        }
+
+        if (!_anyClientSeenThisRun)
+        {
+            // Nobody has connected since launch, so the encoder has never been probed.
+            // Claiming "unavailable" here is a guess, and a wrong one.
+            CmbCodecHevc.Content = "HEVC (Recommended)";
+            CmbCodecJpeg.Content = "JPEG";
+            CmbStreamCodec.ToolTip = "Hardware HEVC. Not verified yet - it is confirmed the first "
+                + "time a device connects.";
+            return;
+        }
+
+        // A client has connected and still no hardware profile was ever selected.
+        CmbCodecHevc.Content = "HEVC (unavailable - using JPEG)";
+        CmbCodecJpeg.Content = "JPEG (fallback)";
+        CmbStreamCodec.ToolTip = hevcSelected
+            ? "No hardware encoder was found, so the stream falls back to JPEG: much higher "
+              + "bandwidth and softer text. Restart as administrator if you expected HEVC."
+            : "JPEG fallback. Lower latency, much higher bandwidth, softer text.";
     }
 
     private readonly Queue<(double fps, double lat)> _sparklineHistory = new();
