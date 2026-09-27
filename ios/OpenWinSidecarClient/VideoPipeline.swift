@@ -133,22 +133,21 @@ public final class VideoPipeline {
             kCVPixelBufferOpenGLCompatibilityKey: false
         ]
 
-        var callbackRecord = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: { (decompressionOutputRefCon, sourceFrameRefCon, status, infoFlags, imageBuffer, presentationTimeStamp, presentationDuration) in
-                guard status == noErr, let pixelBuffer = imageBuffer else { return }
-                let pipeline = Unmanaged<VideoPipeline>.fromOpaque(decompressionOutputRefCon!).takeUnretainedValue()
-                pipeline.onFrameDecoded?(pixelBuffer)
-            },
-            decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
-        )
-
+        // Swift imports the C `decompressionOutputCallback` + `decompressionOutputRefCon`
+        // pair as ONE optional closure parameter labelled `outputHandler:`. There is no
+        // `outputCallback:` label and no VTDecompressionOutputCallbackRecord - passing one
+        // is the "extra argument 'outputCallback' in call" error this file produced.
+        // Capturing self weakly also removes the Unmanaged refcon round-trip.
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
             videoDecoderSpecification: nil,
             destinationImageBufferAttributes: pixelBufferAttributes as CFDictionary,
-            outputCallback: &callbackRecord,
+            outputHandler: { [weak self] _, _, callbackStatus, _, imageBuffer, _, _ in
+                guard callbackStatus == noErr, let pixelBuffer = imageBuffer else { return }
+                self?.onFrameDecoded?(pixelBuffer)
+            },
             decompressionSessionOut: &session
         )
 
@@ -220,12 +219,18 @@ public final class VideoPipeline {
         }
 
         var flagsOut: VTDecodeInfoFlags = []
+        // `sessionDecodeFrameOut:` is the Swift name for the C `sessionDecodeFrameOut`
+        // out-parameter, and the output handler is a labelled `outputHandler:` - not
+        // `infoFlagsOut:` plus a trailing closure.
         VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: validSampleBuffer,
-            flags: [._EnableAsynchronousDecompression],
-            infoFlagsOut: &flagsOut
-        ) { [weak self] status, _, imageBuffer, _, _ in
+            flags: DecodeFrameFlags([.enableAsynchronousDecompression]),
+            imageBufferOut: nil,
+            presentationTimeStampOut: nil,
+            sessionDecodeFrameOut: &flagsOut,
+            frameInfoOut: nil,
+            outputHandler: { [weak self] status, _, imageBuffer, _, _ in
             guard let self = self else { return }
             guard status == noErr, let pixelBuffer = imageBuffer else {
                 // A corrupt chunk (or stale reference) fails the frame but not the session:
@@ -247,6 +252,7 @@ public final class VideoPipeline {
             }
             self.consecutiveDecodeErrors = 0
             self.onFrameDecoded?(pixelBuffer)
-        }
+            }
+        )
     }
 }

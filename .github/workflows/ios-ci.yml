@@ -43,26 +43,6 @@ jobs:
         continue-on-error: true
         run: cd ios/OpenWinSidecarClient && xcodebuild -list || true
 
-      # TEMPORARY: enumerate the valid PlaceholderIcon cases on this toolchain. The type
-      # is Xcode-internal (not in open-source PackageDescription) so it cannot be looked
-      # up in source. Probing beats guessing one name per CI run.
-      - name: Probe PlaceholderIcon cases
-        continue-on-error: true
-        run: |
-          cd ios/OpenWinSidecarClient
-          cp Package.swift /tmp/Package.swift.orig
-          for cand in app application document display monitor screen device desktop \
-                      laptop phone icon placeholder custom appIcon product package \
-                      generic default image photo symbol art appimage displayIcon \
-                      displayImage appDisplay deviceDisplay mac; do
-            sed "s/icon: \.[A-Za-z]*/icon: .$cand/" /tmp/Package.swift.orig > Package.swift
-            if swift package dump-package >/dev/null 2>&1; then
-              echo "VALID-CASE: .$cand"
-            fi
-          done
-          cp /tmp/Package.swift.orig Package.swift
-          echo "probe complete"
-
       - name: Build Swift Package App
         run: |
           cd ios/OpenWinSidecarClient
