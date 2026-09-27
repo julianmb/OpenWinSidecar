@@ -22,8 +22,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Do not hardcode an Xcode path. The image's default is already Xcode 26.x, and
+      # the bundle is not named "/Applications/Xcode_26.app", so a hardcoded guess fails
+      # the step before anything is built. Pick the newest Xcode actually installed.
       - name: Select Xcode Version
-        run: sudo xcode-select -s /Applications/Xcode_26.app
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No Xcode found on this image"; exit 1; fi
+          sudo xcode-select -s "$XCODE"
+          echo "Selected $XCODE"
+          xcodebuild -version
 
       - name: Show toolchain
         run: swift --version
