@@ -133,22 +133,19 @@ public final class VideoPipeline {
             kCVPixelBufferOpenGLCompatibilityKey: false
         ]
 
-        // Swift exposes TWO overloads of VTDecompressionSessionCreate. The C-shaped one
-        // takes destinationImageBufferAttributes plus a callback record; the Swift one
-        // takes imageBufferAttributes plus an outputHandler closure. Mixing a label from
-        // each overload matches neither and fails with "extra argument".
-        //
-        // Weak self also removes the Unmanaged refcon round-trip the record needed.
+        // This toolchain has no closure-taking overload of VTDecompressionSessionCreate:
+        // both `outputCallback:` and `outputHandler:` are reported as an extra argument.
+        // The supported pattern is to create the session with a nil C callback and supply
+        // the output handler per frame in VTDecompressionSessionDecodeFrame, which is what
+        // the decode path below already does.
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
             videoDecoderSpecification: nil,
-            imageBufferAttributes: pixelBufferAttributes as CFDictionary,
-            outputHandler: { [weak self] _, _, callbackStatus, _, imageBuffer, _, _ in
-                guard callbackStatus == noErr, let pixelBuffer = imageBuffer else { return }
-                self?.onFrameDecoded?(pixelBuffer)
-            },
+            destinationImageBufferAttributes: pixelBufferAttributes as CFDictionary,
+            outputCallback: nil,
+            decompressionOutputRefCon: nil,
             decompressionSessionOut: &session
         )
 
@@ -219,18 +216,15 @@ public final class VideoPipeline {
             dict[kCMSampleAttachmentKey_NotSync as String] = isKeyframe ? kCFBooleanFalse : kCFBooleanTrue
         }
 
-        var flagsOut: VTDecodeInfoFlags = []
-        // `sessionDecodeFrameOut:` is the Swift name for the C `sessionDecodeFrameOut`
-        // out-parameter, and the output handler is a labelled `outputHandler:` - not
-        // `infoFlagsOut:` plus a trailing closure.
+        // The flags type is VTDecodeFrameFlags (there is no DecodeFrameFlags), and this
+        // SDK's signature takes only session / sampleBuffer / flags / outputHandler - the
+        // imageBufferOut, presentationTimeStampOut, sessionDecodeFrameOut and frameInfoOut
+        // out-parameters are all rejected as extra arguments. The decode flags we were
+        // collecting were never read, so they are simply gone.
         VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: validSampleBuffer,
-            flags: DecodeFrameFlags([.enableAsynchronousDecompression]),
-            imageBufferOut: nil,
-            presentationTimeStampOut: nil,
-            sessionDecodeFrameOut: &flagsOut,
-            frameInfoOut: nil,
+            flags: VTDecodeFrameFlags([.enableAsynchronousDecompression]),
             outputHandler: { [weak self] status, _, imageBuffer, _, _ in
             guard let self = self else { return }
             guard status == noErr, let pixelBuffer = imageBuffer else {
