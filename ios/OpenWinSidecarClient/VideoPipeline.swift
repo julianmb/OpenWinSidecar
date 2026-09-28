@@ -145,7 +145,6 @@ public final class VideoPipeline {
             videoDecoderSpecification: nil,
             destinationImageBufferAttributes: pixelBufferAttributes as CFDictionary,
             outputCallback: nil,
-            decompressionOutputRefCon: nil,
             decompressionSessionOut: &session
         )
 
@@ -216,16 +215,18 @@ public final class VideoPipeline {
             dict[kCMSampleAttachmentKey_NotSync as String] = isKeyframe ? kCFBooleanFalse : kCFBooleanTrue
         }
 
-        // The flags type is VTDecodeFrameFlags (there is no DecodeFrameFlags), and this
-        // SDK's signature takes only session / sampleBuffer / flags / outputHandler - the
+        // The flags type is VTDecodeFrameFlags and the asynchronous case keeps its
+        // leading underscore (._EnableAsynchronousDecompression). This SDK's signature is
+        // session / sampleBuffer / flags / infoFlagsOut / outputHandler - the
         // imageBufferOut, presentationTimeStampOut, sessionDecodeFrameOut and frameInfoOut
-        // out-parameters are all rejected as extra arguments. The decode flags we were
-        // collecting were never read, so they are simply gone.
+        // out-parameters are rejected as extra arguments.
+        var flagsOut: VTDecodeInfoFlags = []
         VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: validSampleBuffer,
-            flags: VTDecodeFrameFlags([.enableAsynchronousDecompression]),
-            outputHandler: { [weak self] status, _, imageBuffer, _, _ in
+            flags: VTDecodeFrameFlags([._EnableAsynchronousDecompression]),
+            infoFlagsOut: &flagsOut
+        ) { [weak self] status, _, imageBuffer, _, _ in
             guard let self = self else { return }
             guard status == noErr, let pixelBuffer = imageBuffer else {
                 // A corrupt chunk (or stale reference) fails the frame but not the session:
@@ -247,7 +248,6 @@ public final class VideoPipeline {
             }
             self.consecutiveDecodeErrors = 0
             self.onFrameDecoded?(pixelBuffer)
-            }
-        )
+        }
     }
 }
