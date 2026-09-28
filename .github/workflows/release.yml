@@ -74,10 +74,15 @@ jobs:
           # Without this, tagging v0.2.1 while the .iss still said 0.2.0 published 0.2.0
           # binaries under the v0.2.1 tag and wrote a winget manifest whose
           # PackageVersion disagreed with the URL it pointed at.
+          #
+          # Only meaningful for a tag push. A manual run has GITHUB_REF_NAME = "main",
+          # so checking it there would fail every dry run before the build even started.
           $tag = $env:GITHUB_REF_NAME
-          if ($tag -ne "v$v") {
+          $isTagPush = '${{ github.event_name }}' -eq 'push' -and $env:GITHUB_REF_TYPE -eq 'tag'
+          if ($isTagPush -and $tag -ne "v$v") {
             throw "Tag '$tag' does not match installer version '$v'. Set #define MyAppVersion in installer/OpenWinSidecar.iss to $tag, or retag as v$v."
           }
+          if (-not $isTagPush) { Write-Host "Not a tag push (ref '$tag') - skipping the tag/version check." }
 
           "version=$v" >> $env:GITHUB_OUTPUT
           "asset=OpenWinSidecar-Setup-$v.exe" >> $env:GITHUB_OUTPUT
