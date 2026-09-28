@@ -38,8 +38,14 @@ jobs:
   release:
     name: Build installer + release
     runs-on: windows-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      # Job scope on purpose. A step-level `env:` block is NOT in scope for that same
+      # step's `if:`, so defining the thumbprint on the signing step made the condition
+      # always evaluate to empty and signing silently never ran.
+      SIGNING_CERT_THUMBPRINT: ${{ secrets.SIGNING_CERT_THUMBPRINT }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -59,9 +65,19 @@ jobs:
           $m = [regex]::Match($iss, '(?m)^\s*#define MyAppVersion "([^"]+)"')
           if (-not $m.Success) { throw 'MyAppVersion define not found in installer/OpenWinSidecar.iss' }
           $v = $m.Groups[1].Value
+
+          # The trigger accepts any 'v*', and the .iss is the only source of the version.
+          # Without this, tagging v0.2.1 while the .iss still said 0.2.0 published 0.2.0
+          # binaries under the v0.2.1 tag and wrote a winget manifest whose
+          # PackageVersion disagreed with the URL it pointed at.
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -ne "v$v") {
+            throw "Tag '$tag' does not match installer version '$v'. Set #define MyAppVersion in installer/OpenWinSidecar.iss to $tag, or retag as v$v."
+          }
+
           "version=$v" >> $env:GITHUB_OUTPUT
           "asset=OpenWinSidecar-Setup-$v.exe" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $v  Asset: OpenWinSidecar-Setup-$v.exe"
+          Write-Host "Version: $v  Tag: $tag  Asset: OpenWinSidecar-Setup-$v.exe"
 
       - name: Test
         run: >
@@ -92,10 +108,10 @@ jobs:
           Get-ChildItem installer/output
 
       - name: Sign installer (optional)
+        # Reads the job-level env above. Do not re-declare it here: a step-level env:
+        # is not visible to this step's own if:, which is why signing never ran.
         if: ${{ env.SIGNING_CERT_THUMBPRINT != '' }}
         shell: pwsh
-        env:
-          SIGNING_CERT_THUMBPRINT: ${{ secrets.SIGNING_CERT_THUMBPRINT }}
         run: |
           $exe = "installer/output/${{ steps.ver.outputs.asset }}"
           $signtool = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe"
@@ -218,8 +234,18 @@ jobs:
         shell: pwsh
         run: |
           $raw = Get-Content CHANGELOG.md -Raw
-          $m = [regex]::Match($raw, '(?ms)^## .*?\r?\n(.*?)(?=\r?\n## |\z)')
-          $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Release $($env:GITHUB_REF_NAME)" }
+          # Match the heading for THIS tag, not the first '##' in the file. CHANGELOG.md
+          # opens with a repository-housekeeping ops entry above the version sections, so
+          # the old regex shipped that housekeeping text as the release body.
+          $tag = [regex]::Escape($env:GITHUB_REF_NAME)
+          $m = [regex]::Match($raw, "(?ms)^##[^\r\n]*$tag[^\r\n]*\r?\n(.*?)(?=\r?\n## |\z)")
+          if (-not $m.Success) {
+            Write-Warning "No CHANGELOG section mentions $tag - using a generic body."
+            $notes = "Release $($env:GITHUB_REF_NAME)"
+          } else {
+            $notes = $m.Groups[1].Value.Trim()
+            if ($notes.Length -lt 40) { $notes = "Release $($env:GITHUB_REF_NAME)" }
+          }
           # Users are told to verify the download against the release notes — always
           # include the SHA-256 of the attached installer.
           $hash = '${{ steps.hash.outputs.sha256 }}'
@@ -282,15 +308,22 @@ jobs:
           $manifestDir = "manifests/j/julianmb/OpenWinSidecar/$version"
 
           # Clone the fork, sync from upstream master, create a version-specific branch.
-          git clone --depth 1 "https://julianmb:${env:WINGET_PAT}@github.com/julianmb/winget-pkgs.git" winget-pkgs-fork
+          # The PAT goes through an extraheader rather than the clone URL: a URL-embedded
+          # token is persisted in the checkout's .git/config and leaks into any error
+          # message that echoes the remote.
+          git clone --depth 1 https://github.com/julianmb/winget-pkgs.git winget-pkgs-fork
           Set-Location winget-pkgs-fork
+          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:WINGET_PAT"))
+          git config http.https://github.com/.extraheader "AUTHORIZATION: basic $basic"
           git remote add upstream "https://github.com/microsoft/winget-pkgs.git"
           git fetch upstream master --depth 1
           git checkout -b "$branch" upstream/master
 
-          # Remove any previous version folder for this package, then copy the three manifests.
-          $pkgBase = "manifests/j/julianmb/OpenWinSidecar"
-          if (Test-Path $pkgBase) { Get-ChildItem $pkgBase -Directory | Remove-Item -Recurse -Force }
+          # Replace ONLY this release's version folder. The old code deleted every
+          # directory under the package path; because the branch is based on
+          # upstream/master, that proposed removing already-merged version manifests and
+          # wingetbot rejects the PR.
+          if (Test-Path $manifestDir) { Remove-Item $manifestDir -Recurse -Force }
           New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
           Copy-Item ../winget/julianmb.OpenWinSidecar.yaml $manifestDir/
           Copy-Item ../winget/julianmb.OpenWinSidecar.installer.yaml $manifestDir/
