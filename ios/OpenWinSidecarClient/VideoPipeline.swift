@@ -133,17 +133,17 @@ public final class VideoPipeline {
             kCVPixelBufferOpenGLCompatibilityKey: false
         ]
 
-        // This toolchain has no closure-taking overload of VTDecompressionSessionCreate:
-        // both `outputCallback:` and `outputHandler:` are reported as an extra argument.
-        // The supported pattern is to create the session with a nil C callback and supply
-        // the output handler per frame in VTDecompressionSessionDecodeFrame, which is what
-        // the decode path below already does.
+        // Swift renames two of the C parameters here: videoDecoderSpecification becomes
+        // decoderSpecification, and destinationImageBufferAttributes becomes
+        // imageBufferAttributes. There is no decompressionOutputRefCon parameter, and the
+        // output callback is supplied per frame in VTDecompressionSessionDecodeFrame, so
+        // it is nil at creation.
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
-            videoDecoderSpecification: nil,
-            destinationImageBufferAttributes: pixelBufferAttributes as CFDictionary,
+            decoderSpecification: nil,
+            imageBufferAttributes: pixelBufferAttributes as CFDictionary,
             outputCallback: nil,
             decompressionSessionOut: &session
         )
