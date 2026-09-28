@@ -7,6 +7,19 @@ on:
       - '.github/workflows/ios-ci.yml'
   workflow_dispatch:
 
+# Two rapid pushes race on the auto-commit branch, and the refreshed zip would be
+# built twice from the same sources.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# REQUIRED. This job force-pushes the refreshed distributable zip, and without an
+# explicit write scope the push fails with "403 The requested URL returned error".
+# The repository's default workflow token is read-only, so relying on the default
+# scope is what made the final step fail even after the build started succeeding.
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Compile Swift Package App + refresh distributable zip
