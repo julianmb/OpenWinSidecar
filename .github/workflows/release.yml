@@ -23,6 +23,10 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
+        # Manual runs never publish anyway - every step that creates a release, commits
+        # manifests or opens the winget PR is gated on `github.event_name == 'push'`.
+        # This input now also appears in those conditions, so the checkbox means what
+        # CONTRIBUTING says it means instead of being decorative.
         description: 'Build + test only (no release, no manifest commit)'
         type: boolean
         default: true
@@ -196,7 +200,7 @@ jobs:
           Write-Host 'Smoke test: ALL CHECKS PASSED'
 
       - name: Update winget manifests (version, url, hash)
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !inputs.dry_run }}
         shell: pwsh
         run: |
           $v = '${{ steps.ver.outputs.version }}'
@@ -212,7 +216,7 @@ jobs:
           }
 
       - name: Commit winget manifests
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !inputs.dry_run }}
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
@@ -230,7 +234,7 @@ jobs:
           }
 
       - name: Extract release notes from CHANGELOG
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !inputs.dry_run }}
         shell: pwsh
         run: |
           $raw = Get-Content CHANGELOG.md -Raw
@@ -270,7 +274,7 @@ jobs:
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
 
       - name: Create or update GitHub release
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !inputs.dry_run }}
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
@@ -290,7 +294,7 @@ jobs:
       # Without it the release still publishes — the PR is skipped with a clear message.
       - name: Open winget-pkgs submission PR
         id: winget_pr
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && !inputs.dry_run }}
         shell: pwsh
         env:
           WINGET_PAT: ${{ secrets.WINGET_PAT }}

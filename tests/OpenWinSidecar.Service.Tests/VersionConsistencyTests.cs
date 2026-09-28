@@ -43,4 +43,24 @@ public class VersionConsistencyTests
             csprojMatch.Groups[1].Value.Trim(),
             issMatch.Groups[1].Value.Trim());
     }
+
+    /// <summary>
+    /// The Core, Service and CLI assemblies carried no version at all, so they reported
+    /// 1.0.0 in About boxes, crash logs and winget diagnostics while the app said 0.2.0.
+    /// They are stamped from the same value so they cannot quietly disagree again.
+    /// </summary>
+    [Theory]
+    [InlineData("OpenWinSidecar.Core")]
+    [InlineData("OpenWinSidecar.Service")]
+    [InlineData("OpenWinSidecar.Cli")]
+    public void EveryAssemblyCarriesTheSameVersion(string projectName)
+    {
+        var csproj = ReadRepoFile("src", projectName, projectName + ".csproj");
+        var match = System.Text.RegularExpressions.Regex.Match(csproj, "(?m)^\\s*<Version>([^<]+)</Version>");
+        Assert.True(match.Success, $"{projectName}.csproj has no <Version>, so its assembly reports 1.0.0");
+
+        var iss = ReadRepoFile("installer", "OpenWinSidecar.iss");
+        var issMatch = System.Text.RegularExpressions.Regex.Match(iss, "(?m)^\\s*#define MyAppVersion \"([^\"]+)\"");
+        Assert.Equal(issMatch.Groups[1].Value.Trim(), match.Groups[1].Value.Trim());
+    }
 }
