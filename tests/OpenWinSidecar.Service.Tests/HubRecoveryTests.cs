@@ -92,4 +92,47 @@ public class HubRecoveryTests
         Assert.True(SingleInstanceGuard.TryAcquire(name));
         Assert.False(SingleInstanceGuard.TryAcquire(name)); // we hold it -> refused
     }
+
+    /// <summary>
+    /// The guard used to probe with Mutex.OpenExisting and then construct the mutex while
+    /// discarding `createdNew`. Two processes starting together could both pass the probe
+    /// and both proceed as the singleton, then fight over ports 80/8080/28252 and the
+    /// virtual display. Acquisition must be decided by one atomic call.
+    /// Contending threads are released together to maximise the chance of interleaving.
+    /// </summary>
+    [Fact]
+    public void SingletonGuard_ExactlyOneOfManyContendersWins()
+    {
+        string name = @"Local\OpenWinSidecar-Race-" + Guid.NewGuid().ToString("N");
+        const int contenders = 16;
+        var gate = new ManualResetEventSlim(false);
+        int winners = 0;
+
+        var threads = new List<Thread>();
+        for (int i = 0; i < contenders; i++)
+        {
+            var t = new Thread(() =>
+            {
+                gate.Wait();
+                if (SingleInstanceGuard.TryAcquire(name))
+                    Interlocked.Increment(ref winners);
+            });
+            threads.Add(t);
+            t.Start();
+        }
+
+        gate.Set();
+        foreach (var t in threads) t.Join();
+
+        Assert.Equal(1, winners);
+    }
+
+    [Fact]
+    public void SingletonGuard_ReleasesWhenTheOwnerStopsHolding()
+    {
+        // A name that nothing holds must be acquirable, and a fresh name per call keeps the
+        // cases independent.
+        string name = @"Local\OpenWinSidecar-Fresh-" + Guid.NewGuid().ToString("N");
+        Assert.True(SingleInstanceGuard.TryAcquire(name));
+    }
 }

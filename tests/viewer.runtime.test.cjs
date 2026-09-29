@@ -684,6 +684,48 @@ test('fullscreen reports honestly when the platform cannot do it', () => {
         'the install guide already on the page is surfaced instead of duplicating instructions');
 });
 
+test('a device that rejects HEVC twice falls back to JPEG instead of a black screen', () => {
+    const v = viewer();
+    v.run('connectWs();');
+    const socket = v.sockets.at(-1);
+    const desc = (bytes) => 'desc:hvc1.1.6.L93.B0|' + Buffer.from(new Uint8Array(bytes)).toString('base64');
+
+    // initHevcDecoder only reports failure when configure() throws, so reject at the
+    // prototype level - every decoder this session creates will refuse the description.
+    v.run('VideoDecoder.prototype.configure = function () { throw new Error("unsupported profile"); };');
+
+    // First rejection: retry at 8-bit, exactly as before.
+    socket.onmessage({ data: desc([1, 2, 3]) });
+    assert.equal(v.run('consecutiveProfileRejections'), 1);
+    assert.equal(socket.sent.includes('depth:8'), true, 'asks the server for 8-bit');
+    assert.equal(socket.sent.includes('codec:intra'), false, 'does not give up after one rejection');
+
+    // 8-bit is refused too. The server early-returns in EnsureHevcEncoder for unchanged
+    // geometry, so it will never re-send desc: - without this escape the canvas is black
+    // for the rest of the session.
+    socket.onmessage({ data: desc([4, 5, 6]) });
+    assert.equal(v.run('consecutiveProfileRejections'), 2);
+    assert.equal(socket.sent.includes('codec:intra'), true, 'falls back to JPEG');
+    assert.match(v.run('statusNote'), /HEVC unsupported/);
+});
+
+test('a working HEVC decoder resets the rejection counter', () => {
+    const v = viewer();
+    v.run('connectWs();');
+    const socket = v.sockets.at(-1);
+    const desc = (bytes) => 'desc:hvc1.1.6.L93.B0|' + Buffer.from(new Uint8Array(bytes)).toString('base64');
+
+    v.run('VideoDecoder.prototype.configure = function () { throw new Error("unsupported profile"); };');
+    socket.onmessage({ data: desc([1, 2, 3]) });
+    assert.equal(v.run('consecutiveProfileRejections'), 1);
+
+    // A good description must not leave a stale count behind, or a later unrelated
+    // rejection would trigger the JPEG fallback one event too early.
+    v.run('VideoDecoder.prototype.configure = function () { this.state = "configured"; };');
+    socket.onmessage({ data: desc([7, 8, 9]) });
+    assert.equal(v.run('consecutiveProfileRejections'), 0);
+});
+
 // --- Item 4: the pill is the only status surface, so it has to tell the truth ---
 test('the status pill reports a codec fallback rather than staying quietly healthy', () => {
     const v = viewer();

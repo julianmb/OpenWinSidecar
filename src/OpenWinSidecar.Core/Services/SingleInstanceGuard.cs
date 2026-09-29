@@ -24,28 +24,49 @@ public static class SingleInstanceGuard
     /// </summary>
     public static bool TryAcquire(string name = MutexName)
     {
+        // Acquisition is atomic. The previous implementation probed with OpenExisting and
+        // then constructed the mutex, discarding `createdNew` - a textbook time-of-check /
+        // time-of-use race in which two processes starting together both pass the probe and
+        // both proceed as the singleton, then fight over ports 80/8080/28252 and the virtual
+        // display. `createdNew` is the kernel's own answer to "did I create it", so one
+        // call decides it and the probe is unnecessary.
         try
         {
-            try
+            bool createdNew;
+            // Keep the handle in a local first. A loser must never touch the shared static:
+            // clearing it would orphan the winner's handle, and once that handle is
+            // finalised the OS releases the mutex, letting a third process create a fresh
+            // one and also believe it is the singleton.
+            var handle = new Mutex(initiallyOwned: true, name, out createdNew);
+            if (!createdNew)
             {
-                using var existing = Mutex.OpenExisting(name);
-                return false; // a live instance holds it
+                // Someone else owns it. Dropping our extra handle is correct and does not
+                // affect their ownership.
+                handle.Dispose();
+                return false;
             }
-            catch (WaitHandleCannotBeOpenedException) { /* free */ }
-            catch (System.UnauthorizedAccessException) { return false; } // exists but ACL'd: assume live
-        }
-        catch { }
-
-        try
-        {
-            _mutex = new Mutex(true, name, out _);
+            _mutex = handle;
             return true;
         }
         catch (AbandonedMutexException)
         {
-            // Previous owner died without releasing; the mutex is ours now.
-            try { _mutex = new Mutex(true, name, out _); } catch { }
-            return true;
+            // The previous owner died without releasing. Constructing with
+            // initiallyOwned still hands us ownership of an abandoned mutex, but the
+            // abandoned state is only surfaced on a Wait, so re-construct and trust it.
+            try
+            {
+                bool createdNew;
+                _mutex = new Mutex(initiallyOwned: true, name, out createdNew);
+                return true;
+            }
+            catch { return true; }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The mutex exists but this process may not open it - another user or a
+            // higher-integrity instance owns it. Treat as live rather than starting a
+            // second copy that will collide on the ports.
+            return false;
         }
         catch { return true; }
     }

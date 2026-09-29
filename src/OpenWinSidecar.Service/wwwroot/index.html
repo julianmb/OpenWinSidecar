@@ -1200,6 +1200,10 @@ let reconnectDelayMs = 1000;
         let pendingCodec = 'hvc1.1.6.L93.B0';
         let configuredHvcC = null;
         let configuredCodec = null;
+        // How many times in a row the server has sent a description this device refused to
+        // configure. One rejection is a profile problem (retry at 8-bit); two means the
+        // device cannot do HEVC at all, and the only working stream left is JPEG.
+        let consecutiveProfileRejections = 0;
         let needsHevcKeyframe = true;
         let keyframeRequestPending = false;
         let lastKeyframeRequest = -Infinity;
@@ -1647,15 +1651,29 @@ let reconnectDelayMs = 1000;
                             activeCodec = 'hevc';
                             {
                                 if (!initHevcDecoder()) {
-                                    // This device rejects the stream's profile (e.g. Main10) —
-                                    // drop back to 8-bit instead of a black screen.
-                                    activeDepth = 8;
-                                    if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:8');
-                                    console.warn('[Color] Stream profile rejected by decoder — reverted to 8-bit');
-                                    setStatusNote('profile rejected — retrying at 8-bit', 'warn');
+                                    // This device rejects the stream's profile (e.g. Main10).
+                                    // First retry drops to 8-bit. If 8-bit is rejected too there is
+                                    // no point retrying: the server early-returns in
+                                    // EnsureHevcEncoder when the geometry is unchanged, so it
+                                    // never re-sends desc:, and the session sits on HEVC with a
+                                    // dead decoder - a permanently black canvas whose only symptom
+                                    // was a console warning. Fall all the way back to JPEG, which
+                                    // every browser can decode.
+                                    consecutiveProfileRejections++;
+                                    if (consecutiveProfileRejections >= 2) {
+                                        console.warn('[WebCodecs] HEVC profile rejected at 8-bit too - falling back to JPEG');
+                                        setStatusNote('HEVC unsupported on this device - using JPEG', 'warn');
+                                        changeCodec('intra');
+                                    } else {
+                                        activeDepth = 8;
+                                        if (ws && ws.readyState === WebSocket.OPEN) ws.send('depth:8');
+                                        console.warn('[Color] Stream profile rejected by decoder - reverted to 8-bit');
+                                        setStatusNote('profile rejected - retrying at 8-bit', 'warn');
+                                    }
                                 } else {
                                     // A working HEVC decoder supersedes any earlier degradation
                                     // notice (a previous JPEG fallback, a rejected profile).
+                                    consecutiveProfileRejections = 0;
                                     setStatusNote('', 'ok');
                                 }
                             }

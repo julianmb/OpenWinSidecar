@@ -318,12 +318,17 @@ public sealed class HevcStreamEncoder : IDisposable
                 _ffmpegProc = Process.Start(psi);
                 if (_ffmpegProc == null) return false;
 
-                // Surface FFmpeg's stderr ÔÇö with -loglevel error this only carries real failures,
-                // and an unread stderr pipe would otherwise silently block or hide crashes
+                // Surface FFmpeg's stderr - with -loglevel error this only carries real
+                // failures. It is drained asynchronously (BeginErrorReadLine) because an
+                // unread stderr pipe fills and blocks the encoder. Keep the last few lines
+                // in a ring so a failure can be reported with context: reading the stream
+                // again at failure time is not possible, because a stream with an active
+                // async reader cannot also be read synchronously.
                 _ffmpegProc.ErrorDataReceived += (s, e) =>
                 {
-                    if (!string.IsNullOrEmpty(e.Data))
-                        Console.WriteLine("[HEVC][ff] " + e.Data);
+                    if (string.IsNullOrEmpty(e.Data)) return;
+                    Console.WriteLine("[HEVC][ff] " + e.Data);
+                    RecordStderrLine(e.Data);
                 };
                 _ffmpegProc.BeginErrorReadLine();
 
@@ -385,12 +390,29 @@ public sealed class HevcStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Last few lines of ffmpeg's stderr, for failure diagnostics.</summary>
+    private const int StderrRingCapacity = 20;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _stderrRing = new();
+
+    private void RecordStderrLine(string line)
+    {
+        // The handler runs on a threadpool thread, so the ring must be thread-safe. Trim to
+        // bound memory: ffmpeg in a retry loop can emit a lot before the failure is reported.
+        _stderrRing.Enqueue(line.Length > 400 ? line.Substring(0, 400) : line);
+        while (_stderrRing.Count > StderrRingCapacity && _stderrRing.TryDequeue(out _)) { }
+    }
+
+    private string StderrSnapshot() => string.Join(" | ", _stderrRing.ToArray());
+
     private void LogPushFailure(Exception ex)
     {
         if (_pushFailLogged == 0 && Interlocked.Exchange(ref _pushFailLogged, 1) == 0)
         {
-            string stderrSnapshot = "";
-            try { stderrSnapshot = _ffmpegProc == null ? "" : _ffmpegProc.StandardError.ReadToEnd(); } catch { }
+            // Previously this called StandardError.ReadToEnd() here, on a stream that
+            // BeginErrorReadLine already owns. Mixing a sync read with an active async
+            // reader returns nothing useful or throws, which is why encoder failures
+            // logged an empty stderr - the one diagnostic that mattered most.
+            string stderrSnapshot = _ffmpegProc == null ? "(no process)" : StderrSnapshot();
             Console.WriteLine($"[HEVC] PushRawFrame failed: {ex.Message} | exited={_ffmpegProc?.HasExited} exitCode={(_ffmpegProc?.HasExited == true ? _ffmpegProc.ExitCode : -1)} | stderr: {stderrSnapshot}");
         }
     }
